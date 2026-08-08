@@ -4,14 +4,23 @@ import com.ronald.agent.subagent.SubAgent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * An {@link AgenticWorkflow} that executes multiple {@link SubAgent}s concurrently (fan-out),
  * collects their results into a shared context (fan-in), and delegates the final synthesis
  * to a typed aggregator agent.
+ *
+ * <p>Every branch is bounded by a per-branch timeout (60 seconds by default) and recovered
+ * according to a {@link BranchFailurePolicy}, so a single slow or failing agent cannot hang
+ * the workflow indefinitely. By default a failed branch aborts the workflow
+ * ({@link BranchFailurePolicy#FAIL_FAST}); configure {@link BranchFailurePolicy#DEGRADE} to
+ * aggregate whatever the surviving branches produced instead.</p>
  *
  * <p>Use {@link #builder()} to construct instances.</p>
  *
@@ -23,10 +32,32 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
 
     private static final String CTX_INPUT = "input";
 
+    /**
+     * Determines what happens when a single fan-out branch fails or times out.
+     */
+    public enum BranchFailurePolicy {
+        /**
+         * Abort the whole workflow; the failure propagates out of {@link #invoke(String)}.
+         * This is the default, and matches the behaviour of a plain {@code allOf(...).join()}.
+         */
+        FAIL_FAST,
+        /**
+         * Keep going with the surviving branches. The failed branch contributes a short
+         * failure marker instead of a result, so the aggregator still receives every key
+         * and can reason about the gap explicitly.
+         */
+        DEGRADE
+    }
+
+    /** Prefix marking a branch whose result is missing under {@link BranchFailurePolicy#DEGRADE}. */
+    private static final String UNAVAILABLE_PREFIX = "UNAVAILABLE - this analysis did not complete: ";
+
     private final List<SubAgent<String>> subAgents;
     private final SubAgent<T> aggregator; // Strongly typed to T
     private final Executor executor;
     private final String reportsKey;
+    private final Duration branchTimeout;
+    private final BranchFailurePolicy failurePolicy;
 
     /**
      * Private constructor — use {@link #builder()} instead.
@@ -34,10 +65,12 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
      * @param builder the fully populated builder
      */
     private ParallelAgentOrchestrator(Builder<T> builder) {
-        this.subAgents  = List.copyOf(builder.subAgents);
-        this.aggregator = builder.aggregator;
-        this.executor   = builder.executor;
-        this.reportsKey = builder.reportsKey;
+        this.subAgents     = List.copyOf(builder.subAgents);
+        this.aggregator    = builder.aggregator;
+        this.executor      = builder.executor;
+        this.reportsKey    = builder.reportsKey;
+        this.branchTimeout = builder.branchTimeout;
+        this.failurePolicy = builder.failurePolicy;
     }
 
     /**
@@ -55,23 +88,31 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
      * Executes all sub-agents concurrently, collects their results, and passes them to the aggregator agent.
      * The aggregator's output is returned, potentially deserialized into the specified output type.
      *
+     * <p>Each branch is bounded by {@link Builder#branchTimeout(Duration)} and, if it fails or
+     * times out, handled according to the configured {@link BranchFailurePolicy}.</p>
+     *
      * @param input the input string to process
      * @return the aggregated result from the aggregator agent
      * @throws NullPointerException if input is null
      * @throws IllegalStateException if any sub-agent or aggregator returns null
+     * @throws CompletionException   under {@link BranchFailurePolicy#FAIL_FAST}, if any branch
+     *                               fails or exceeds the branch timeout
      */
     @Override
     public T invoke(String input) {
         Objects.requireNonNull(input, "input must not be null");
-        log.info("fan_out_start subAgents={} inputLength={}", subAgents.size(), input.length());
+        log.info("fan_out_start subAgents={} inputLength={} timeout={} policy={}",
+                subAgents.size(), input.length(), branchTimeout, failurePolicy);
 
         Map<String, String> fanOutContext = Map.of(CTX_INPUT, input);
 
         // ── Fan-out ──────────────────────────────────────────────────────────
+        // Each branch is independently bounded and independently recovered, so one slow or
+        // failing agent cannot hang the workflow or discard its siblings' completed work.
         List<CompletableFuture<BranchResult>> futures = subAgents.stream()
-                .map(agent -> CompletableFuture
-                        .supplyAsync(() -> executeBranch(agent, fanOutContext), executor)
-                )
+                .map(agent -> withTimeout(
+                        CompletableFuture.supplyAsync(() -> executeBranch(agent, fanOutContext), executor))
+                        .handle((result, error) -> error == null ? result : recoverBranch(agent, error)))
                 .toList();
 
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
@@ -117,6 +158,52 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
     }
 
     /**
+     * Bounds a branch future by the configured timeout, if one is set.
+     *
+     * <p>Note that {@link CompletableFuture#orTimeout} completes the <em>future</em>
+     * exceptionally but cannot interrupt the in-flight call; the underlying HTTP request
+     * runs to completion and its result is discarded. The timeout therefore bounds how long
+     * the workflow waits, not how long the agent runs.</p>
+     *
+     * @param future the branch future to bound
+     * @return the bounded future, or the original future if no timeout is configured
+     */
+    private CompletableFuture<BranchResult> withTimeout(CompletableFuture<BranchResult> future) {
+        if (branchTimeout.isZero()) {
+            return future;
+        }
+        return future.orTimeout(branchTimeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * Applies the configured {@link BranchFailurePolicy} to a failed or timed-out branch.
+     *
+     * @param agent the sub-agent whose branch failed
+     * @param error the failure, possibly wrapped in a {@link CompletionException}
+     * @return a placeholder {@link BranchResult} under {@link BranchFailurePolicy#DEGRADE}
+     * @throws CompletionException under {@link BranchFailurePolicy#FAIL_FAST}, always
+     */
+    private BranchResult recoverBranch(SubAgent<String> agent, Throwable error) {
+        Throwable cause = (error instanceof CompletionException && error.getCause() != null)
+                ? error.getCause()
+                : error;
+        String agentName = agent.getClass().getSimpleName();
+        String reason = cause.getClass().getSimpleName()
+                + (cause.getMessage() != null ? ": " + cause.getMessage() : "");
+
+        if (failurePolicy == BranchFailurePolicy.FAIL_FAST) {
+            log.error("branch_failed agent={} outputKey={} reason={} policy=FAIL_FAST",
+                    agentName, agent.getOutputKey(), reason);
+            throw new CompletionException(
+                    "Branch '" + agent.getOutputKey() + "' (" + agentName + ") failed: " + reason, cause);
+        }
+
+        log.warn("branch_degraded agent={} outputKey={} reason={} policy=DEGRADE",
+                agentName, agent.getOutputKey(), reason);
+        return new BranchResult(agent.getOutputKey(), UNAVAILABLE_PREFIX + reason);
+    }
+
+    /**
      * Holds the result of a single parallel branch.
      *
      * @param outputKey the context key under which the value will be stored
@@ -131,10 +218,14 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
      */
     public static final class Builder<T> {
         private static final String DEFAULT_REPORTS_KEY = "reports";
+        private static final Duration DEFAULT_BRANCH_TIMEOUT = Duration.ofSeconds(60);
+
         private final List<SubAgent<String>> subAgents = new ArrayList<>();
         private SubAgent<T> aggregator;
         private Executor executor;
         private String reportsKey = DEFAULT_REPORTS_KEY;
+        private Duration branchTimeout = DEFAULT_BRANCH_TIMEOUT;
+        private BranchFailurePolicy failurePolicy = BranchFailurePolicy.FAIL_FAST;
 
         private Builder() {}
 
@@ -206,6 +297,48 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
          */
         public Builder<T> reportsKey(String reportsKey) {
             this.reportsKey = Objects.requireNonNull(reportsKey);
+            return this;
+        }
+
+        /**
+         * Sets how long to wait for any single branch before treating it as failed.
+         * Defaults to 60 seconds. Bounds the wait, not the underlying call — see
+         * {@link ParallelAgentOrchestrator#withTimeout}.
+         *
+         * @param branchTimeout the per-branch timeout; {@link Duration#ZERO} waits indefinitely
+         * @return this Builder
+         * @throws NullPointerException     if branchTimeout is null
+         * @throws IllegalArgumentException if branchTimeout is negative
+         */
+        public Builder<T> branchTimeout(Duration branchTimeout) {
+            Objects.requireNonNull(branchTimeout, "branchTimeout must not be null");
+            if (branchTimeout.isNegative()) {
+                throw new IllegalArgumentException("branchTimeout must not be negative: " + branchTimeout);
+            }
+            this.branchTimeout = branchTimeout;
+            return this;
+        }
+
+        /**
+         * Waits indefinitely for every branch, restoring the pre-timeout behaviour.
+         * Prefer {@link #branchTimeout(Duration)} — an unbounded LLM call can hang the workflow.
+         *
+         * @return this Builder
+         */
+        public Builder<T> noBranchTimeout() {
+            return branchTimeout(Duration.ZERO);
+        }
+
+        /**
+         * Sets what happens when a branch fails or times out.
+         * Defaults to {@link BranchFailurePolicy#FAIL_FAST}.
+         *
+         * @param failurePolicy the policy to apply to failed branches
+         * @return this Builder
+         * @throws NullPointerException if failurePolicy is null
+         */
+        public Builder<T> failurePolicy(BranchFailurePolicy failurePolicy) {
+            this.failurePolicy = Objects.requireNonNull(failurePolicy, "failurePolicy must not be null");
             return this;
         }
 
