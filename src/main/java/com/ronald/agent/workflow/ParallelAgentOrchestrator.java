@@ -220,7 +220,39 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
             if (subAgents.isEmpty()) throw new IllegalStateException("SubAgents required.");
             Objects.requireNonNull(aggregator, "Aggregator required.");
             Objects.requireNonNull(executor, "Executor required.");
+            validateOutputKeys();
             return new ParallelAgentOrchestrator<>(this);
+        }
+
+        /**
+         * Verifies that every sub-agent contributes a distinct, usable slot in the aggregator
+         * context. Without this check a colliding key would silently overwrite another branch's
+         * result during fan-in, discarding completed work with no error.
+         *
+         * @throws IllegalStateException if an output key is null, blank, duplicated, or collides
+         *                               with a reserved context key
+         */
+        private void validateOutputKeys() {
+            Set<String> seen = new HashSet<>();
+            for (SubAgent<String> agent : subAgents) {
+                String key = agent.getOutputKey();
+                String agentName = agent.getClass().getSimpleName();
+
+                if (key == null || key.isBlank()) {
+                    throw new IllegalStateException(
+                            "SubAgent " + agentName + " must return a non-blank getOutputKey().");
+                }
+                if (CTX_INPUT.equals(key) || reportsKey.equals(key)) {
+                    throw new IllegalStateException(
+                            "SubAgent " + agentName + " uses reserved output key '" + key
+                                    + "'. Reserved keys are '" + CTX_INPUT + "' and '" + reportsKey + "'.");
+                }
+                if (!seen.add(key)) {
+                    throw new IllegalStateException(
+                            "Duplicate output key '" + key + "' (SubAgent " + agentName
+                                    + "). Each sub-agent must contribute a unique key to the aggregator context.");
+                }
+            }
         }
     }
 }
