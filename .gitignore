@@ -4,7 +4,6 @@
 
 .gradle
 build/
-!gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
 
@@ -34,6 +33,9 @@ out/
 
 # Package Files #
 *.jar
+# The Gradle wrapper jar must be committed — ./gradlew cannot run without it.
+# This negation has to sit after *.jar: git applies the last matching pattern.
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 *.nar
 *.ear
