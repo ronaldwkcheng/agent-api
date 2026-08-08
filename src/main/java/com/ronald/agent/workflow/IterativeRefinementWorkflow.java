@@ -8,6 +8,7 @@ import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * An {@link AgenticWorkflow} that repeatedly refines content until it passes evaluation
@@ -33,6 +34,7 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
     private final String initialContent;
     private final String criteria;
     private final int maxAttempts;
+    private final ExhaustionPolicy exhaustionPolicy;
 
     /**
      * Private constructor — use {@link #builder()} instead.
@@ -40,11 +42,12 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
      * @param builder the fully populated builder
      */
     private IterativeRefinementWorkflow(Builder builder) {
-        this.refinerAgent   = builder.refinerAgent;
-        this.evaluatorAgent = builder.evaluatorAgent;
-        this.initialContent = builder.initialContent;
-        this.criteria       = builder.criteria;
-        this.maxAttempts    = builder.maxAttempts;
+        this.refinerAgent     = builder.refinerAgent;
+        this.evaluatorAgent   = builder.evaluatorAgent;
+        this.initialContent   = builder.initialContent;
+        this.criteria         = builder.criteria;
+        this.maxAttempts      = builder.maxAttempts;
+        this.exhaustionPolicy = builder.exhaustionPolicy;
     }
 
     /**
@@ -62,8 +65,12 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
      * and evaluates the content until it passes evaluation or {@code maxAttempts} is exhausted.</p>
      *
      * @param input the original user task/request used as context throughout refinement
-     * @return the refined content string that either passed evaluation or is the best result
-     *         after the maximum number of attempts
+     * @return the refined content that passed evaluation, or — under
+     *         {@link ExhaustionPolicy#RETURN_PARTIAL} — the best draft after {@code maxAttempts}
+     * @throws WorkflowExhaustedException if no draft passes within {@code maxAttempts} and the
+     *                                    policy is {@link ExhaustionPolicy#THROW}; the last draft
+     *                                    is available via
+     *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
     public String invoke(String input) {
@@ -106,8 +113,16 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
             log.debug("Evaluation failed, refine again... {}", evaluationResponse);
         }
 
-        log.debug("Reached max retries. Returning last content.");
-        return content;
+        if (exhaustionPolicy == ExhaustionPolicy.RETURN_PARTIAL) {
+            log.warn("refinement_exhausted attempts={} policy=RETURN_PARTIAL — returning last draft, "
+                    + "which never passed evaluation", maxAttempts);
+            return content;
+        }
+
+        log.error("refinement_exhausted attempts={} policy=THROW", maxAttempts);
+        throw new WorkflowExhaustedException(
+                "Content did not pass evaluation within " + maxAttempts + " attempts",
+                maxAttempts, content);
     }
 
     /**
@@ -119,6 +134,20 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
         private SubAgent<String> refinerAgent;
         private String criteria;
         private int maxAttempts = 5;
+        private ExhaustionPolicy exhaustionPolicy = ExhaustionPolicy.THROW;
+
+        /**
+         * Sets what happens when no draft passes evaluation within {@code maxAttempts}.
+         * Defaults to {@link ExhaustionPolicy#THROW}.
+         *
+         * @param exhaustionPolicy the policy to apply on exhaustion
+         * @return this builder
+         * @throws NullPointerException if exhaustionPolicy is null
+         */
+        public Builder exhaustionPolicy(ExhaustionPolicy exhaustionPolicy) {
+            this.exhaustionPolicy = Objects.requireNonNull(exhaustionPolicy, "exhaustionPolicy must not be null");
+            return this;
+        }
 
         /**
          * Sets the {@link ChatClient} used to construct the internal {@link EvaluatorAgent}.
@@ -209,7 +238,9 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
      * Evaluates generated content against a set of criteria and returns a structured
      * {@link EvaluationResponse} containing a status and actionable feedback.
      */
-    private static class EvaluatorAgent extends AbstractPromptSubAgent<EvaluatorAgent.EvaluationResponse> {
+    // Package-private rather than private so tests in this package can drive the loop with a
+    // stubbed evaluation response instead of a live ChatClient.
+    static class EvaluatorAgent extends AbstractPromptSubAgent<EvaluatorAgent.EvaluationResponse> {
 
         /**
          * Structured result returned by the evaluator.

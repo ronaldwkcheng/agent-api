@@ -79,11 +79,13 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
     private final ReActThinkerAgent         thinkerAgent;
     private final Map<String, ToolCallback> tools;
     private final int                       maxSteps;
+    private final ExhaustionPolicy          exhaustionPolicy;
 
     private ReActWorkflow(Builder builder) {
-        this.thinkerAgent = new ReActThinkerAgent(builder.chatClient, builder.reactPromptTemplate);
-        this.tools        = Collections.unmodifiableMap(new LinkedHashMap<>(builder.tools));
-        this.maxSteps     = builder.maxSteps;
+        this.thinkerAgent     = new ReActThinkerAgent(builder.chatClient, builder.reactPromptTemplate);
+        this.tools            = Collections.unmodifiableMap(new LinkedHashMap<>(builder.tools));
+        this.maxSteps         = builder.maxSteps;
+        this.exhaustionPolicy = builder.exhaustionPolicy;
     }
 
     /**
@@ -104,9 +106,13 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
      * appended to the scratchpad before the next iteration begins.</p>
      *
      * @param input the user's question or task
-     * @return the agent's final answer string
-     * @throws NullPointerException  if {@code input} is null
-     * @throws IllegalStateException if no final answer is produced within {@code maxSteps}
+     * @return the agent's final answer, or — under {@link ExhaustionPolicy#RETURN_PARTIAL} —
+     *         its last recorded thought
+     * @throws NullPointerException       if {@code input} is null
+     * @throws WorkflowExhaustedException if no final answer is produced within {@code maxSteps}
+     *                                    and the policy is {@link ExhaustionPolicy#THROW}; the last
+     *                                    thought is available via
+     *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
     public String invoke(String input) {
@@ -119,11 +125,13 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
         context.put(CTX_SCRATCHPAD, "");
 
         StringBuilder scratchpad = new StringBuilder();
+        String lastThought = null;
 
         for (int step = 1; step <= maxSteps; step++) {
             log.debug("react_step step={}/{}", step, maxSteps);
 
             ReActThought thought = thinkerAgent.execute(Collections.unmodifiableMap(context));
+            lastThought = thought.thought();
             log.debug("react_thought step={} thought=\"{}\" finalAnswer={}",
                     step, thought.thought(), thought.finalAnswer());
 
@@ -155,8 +163,16 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
             context.put(CTX_SCRATCHPAD, scratchpad.toString());
         }
 
-        throw new IllegalStateException(
-                "ReAct workflow did not reach a final answer within " + maxSteps + " steps");
+        if (exhaustionPolicy == ExhaustionPolicy.RETURN_PARTIAL) {
+            log.warn("react_exhausted steps={} policy=RETURN_PARTIAL — returning last thought, "
+                    + "which is reasoning rather than a final answer", maxSteps);
+            return lastThought;
+        }
+
+        log.error("react_exhausted steps={} policy=THROW", maxSteps);
+        throw new WorkflowExhaustedException(
+                "ReAct workflow did not reach a final answer within " + maxSteps + " steps",
+                maxSteps, lastThought);
     }
 
     private String buildToolsDescription() {
@@ -232,6 +248,20 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
         private final Map<String, ToolCallback> tools              = new LinkedHashMap<>();
         private int                          maxSteps             = 10;
         private String                       reactPromptTemplate  = DEFAULT_REACT_PROMPT_TEMPLATE;
+        private ExhaustionPolicy             exhaustionPolicy     = ExhaustionPolicy.THROW;
+
+        /**
+         * Sets what happens when no final answer is reached within {@code maxSteps}.
+         * Defaults to {@link ExhaustionPolicy#THROW}.
+         *
+         * @param exhaustionPolicy the policy to apply on exhaustion
+         * @return this builder
+         * @throws NullPointerException if exhaustionPolicy is null
+         */
+        public Builder exhaustionPolicy(ExhaustionPolicy exhaustionPolicy) {
+            this.exhaustionPolicy = Objects.requireNonNull(exhaustionPolicy, "exhaustionPolicy must not be null");
+            return this;
+        }
 
         /**
          * Sets the {@link ChatClient} used for all reasoning steps.

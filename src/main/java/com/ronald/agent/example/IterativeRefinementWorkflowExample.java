@@ -1,6 +1,7 @@
 package com.ronald.agent.example;
 
 import com.ronald.agent.subagent.DefaultPromptSubAgent;
+import com.ronald.agent.workflow.ExhaustionPolicy;
 import com.ronald.agent.workflow.IterativeRefinementWorkflow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.chat.client.ChatClient;
@@ -65,6 +66,9 @@ public class IterativeRefinementWorkflowExample {
                 .initialContent(story)
                 .criteria(criteria)
                 .maxAttempts(7)
+                // A story that never quite passed is still worth reading, so prefer the best
+                // draft over an exception here.
+                .exhaustionPolicy(ExhaustionPolicy.RETURN_PARTIAL)
                 .build();
 
         // Execute the workflow directly

@@ -86,6 +86,7 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
     private final SubAgent<String> stepExecutor;
     private final SubAgent<T>      synthesizer;
     private final int              maxSteps;
+    private final ExhaustionPolicy exhaustionPolicy;
 
     /**
      * Private constructor — use {@link #builder()} instead.
@@ -93,10 +94,11 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
      * @param builder the fully populated builder
      */
     private PlanAndExecuteWorkflow(Builder<T> builder) {
-        this.plannerAgent = new PlannerAgent(builder.chatClient, builder.plannerPromptTemplate);
-        this.stepExecutor = builder.stepExecutor;
-        this.synthesizer  = builder.synthesizer;
-        this.maxSteps     = builder.maxSteps;
+        this.plannerAgent     = new PlannerAgent(builder.chatClient, builder.plannerPromptTemplate);
+        this.stepExecutor     = builder.stepExecutor;
+        this.synthesizer      = builder.synthesizer;
+        this.maxSteps         = builder.maxSteps;
+        this.exhaustionPolicy = builder.exhaustionPolicy;
     }
 
     /**
@@ -119,8 +121,12 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
      *
      * @param input the user task description
      * @return the synthesized result of type {@code T}
-     * @throws NullPointerException  if {@code input} is null
-     * @throws IllegalStateException if the planner produces an empty plan
+     * @throws NullPointerException       if {@code input} is null
+     * @throws IllegalStateException      if the planner produces an empty plan
+     * @throws WorkflowExhaustedException if the plan needs more than {@code maxSteps} steps and
+     *                                    the policy is {@link ExhaustionPolicy#THROW}; the full
+     *                                    plan that could not be executed is available via
+     *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
     public T invoke(String input) {
@@ -139,7 +145,24 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
             throw new IllegalStateException("Planner produced an empty plan for input: " + input);
         }
 
-        List<Step> steps = plan.steps().stream().limit(maxSteps).toList();
+        // A plan longer than the budget cannot be executed in full. Truncating it silently would
+        // hand the synthesizer a partial plan and let it present the report as complete.
+        List<Step> plannedSteps = plan.steps();
+        if (plannedSteps.size() > maxSteps) {
+            if (exhaustionPolicy == ExhaustionPolicy.THROW) {
+                log.error("plan_exceeds_budget planned={} maxSteps={} policy=THROW",
+                        plannedSteps.size(), maxSteps);
+                throw new WorkflowExhaustedException(
+                        "Planner produced " + plannedSteps.size() + " steps, exceeding maxSteps="
+                                + maxSteps + "; the task cannot be completed within the configured budget",
+                        maxSteps, formatPlan(plannedSteps));
+            }
+            log.warn("plan_truncated planned={} maxSteps={} dropped={} policy=RETURN_PARTIAL — "
+                            + "the final report will cover only the first {} steps",
+                    plannedSteps.size(), maxSteps, plannedSteps.size() - maxSteps, maxSteps);
+        }
+
+        List<Step> steps = plannedSteps.stream().limit(maxSteps).toList();
         String formattedPlan = formatPlan(steps);
         log.debug("plan_created steps={}", steps.size());
 
@@ -250,8 +273,23 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
         private SubAgent<T>        synthesizer;
         private int                maxSteps             = 10;
         private String             plannerPromptTemplate = DEFAULT_PLANNER_PROMPT_TEMPLATE;
+        private ExhaustionPolicy   exhaustionPolicy      = ExhaustionPolicy.THROW;
 
         private Builder() {}
+
+        /**
+         * Sets what happens when the planner produces more steps than {@code maxSteps}.
+         * Defaults to {@link ExhaustionPolicy#THROW}; {@link ExhaustionPolicy#RETURN_PARTIAL}
+         * executes the first {@code maxSteps} steps and logs what was dropped.
+         *
+         * @param exhaustionPolicy the policy to apply when the plan exceeds the budget
+         * @return this builder
+         * @throws NullPointerException if exhaustionPolicy is null
+         */
+        public Builder<T> exhaustionPolicy(ExhaustionPolicy exhaustionPolicy) {
+            this.exhaustionPolicy = Objects.requireNonNull(exhaustionPolicy, "exhaustionPolicy must not be null");
+            return this;
+        }
 
         /**
          * Sets the {@link ChatClient} used by the internal planner agent.
