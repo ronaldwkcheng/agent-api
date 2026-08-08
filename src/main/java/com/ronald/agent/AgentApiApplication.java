@@ -5,13 +5,32 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 
+/**
+ * Application entry point.
+ *
+ * <p>Each workflow pattern has a demo {@link CommandLineRunner} that is registered only when
+ * the {@code agent.demo} property selects it, so a plain boot — and every test — starts without
+ * calling the model provider. Run one with:</p>
+ *
+ * <pre>{@code
+ * ./gradlew bootRun --args='--agent.demo=react'
+ * }</pre>
+ *
+ * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
+ * {@code iterative}, {@code plan-and-execute}, {@code react}. Values are matched exactly,
+ * so relaxed binding does not apply — spell them as written.</p>
+ */
 @SpringBootApplication
 public class AgentApiApplication {
+
+    /** Property selecting which demo runner, if any, is registered. */
+    private static final String DEMO_PROPERTY = "agent.demo";
 
     public static void main(String[] args) {
         SpringApplication.run(AgentApiApplication.class, args);
@@ -29,7 +48,8 @@ public class AgentApiApplication {
         return Executors.newVirtualThreadPerTaskExecutor();
     }
 
-//    @Bean
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "sequential")
     CommandLineRunner sequentialRunner(SequentialWorkflowExample service) {
         return args -> {
             String userComplaint = "I was charged twice for my subscription this month and I need a refund!";
@@ -39,7 +59,8 @@ public class AgentApiApplication {
         };
     }
 
-//    @Bean
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "parallel")
     CommandLineRunner parallelRunner(ParallelWorkflowExample service) {
         return args -> {
             String input = "I love the new features in your product, but sometimes it crashes unexpectedly. Also, I found a bug in the latest update.";
@@ -49,7 +70,8 @@ public class AgentApiApplication {
         };
     }
 
-//    @Bean
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "conditional")
     CommandLineRunner conditionalRunner(ConditionalWorkflowExample service) {
         return args -> {
             System.out.println("\n=== ConditionalWorkflowExample result ===");
@@ -65,7 +87,8 @@ public class AgentApiApplication {
         };
     }
 
-//    @Bean
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "iterative")
     public CommandLineRunner refineRunner(IterativeRefinementWorkflowExample service) {
         return args -> {
             System.out.println("\n=== IterativeRefinementWorkflowExample result ===");
@@ -85,6 +108,7 @@ public class AgentApiApplication {
     }
 
     @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "plan-and-execute")
     CommandLineRunner planAndExecuteRunner(PlanAndExecuteWorkflowExample service) {
         return args -> {
             System.out.println("\n=== PlanAndExecuteWorkflowExample result ===");
@@ -94,7 +118,8 @@ public class AgentApiApplication {
         };
     }
 
-//    @Bean
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "react")
     CommandLineRunner reactRunner(ReActWorkflowExample service) {
         return args -> {
             System.out.println("\n=== ReActWorkflowExample result ===");

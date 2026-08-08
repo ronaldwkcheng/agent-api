@@ -5,11 +5,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build and Run Commands
 
 ```bash
-# Build
+# Build — needs no API key and makes no model calls
 ./gradlew build
 
-# Run application (requires OPENAI_API_KEY env var)
+# Run application (requires openai_api_key env var)
 ./gradlew bootRun
+
+# Run one of the workflow demos (issues real, billable model requests)
+./gradlew bootRun --args='--agent.demo=react'
 
 # Run all tests
 ./gradlew test
@@ -18,7 +21,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./gradlew test --tests "com.ronald.agent.SomeTestClass"
 ```
 
-The application requires the `openai_api_key` environment variable to be set. It starts on port 8080 using Java 21 virtual threads.
+The application starts on port 8080 using Java 21 virtual threads and requires the
+`openai_api_key` environment variable.
+
+Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
+when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
+`plan-and-execute`, or `react`. Values are matched exactly. Without the property no runner is
+registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
+`SpringApplication.run()` and would otherwise execute a runner on every build.
+
+Tests must never require an API key or reach the network. `AgentApiApplicationTests` overrides
+the key with a placeholder, and the workflow tests use stub `SubAgent`s rather than a
+`ChatClient`.
 
 ## Architecture
 
