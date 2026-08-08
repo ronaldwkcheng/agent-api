@@ -14,6 +14,11 @@ import java.util.*;
  * The router uses a routing ChatClient to classify the input into categories and then routes to the appropriate agent.
  * If no matching route is found, it falls back to a default agent or response.
  *
+ * <p>A fallback is mandatory. Classification is free-form LLM output, so no set of routes can be
+ * exhaustive, and {@link AgenticWorkflow#invoke} must never return null — {@link Builder#build()}
+ * therefore rejects a router with neither {@link Builder#defaultAgent} nor
+ * {@link Builder#defaultResponse} configured.</p>
+ *
  * @param <T> the type of the output returned by the router
  */
 public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
@@ -60,9 +65,9 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
      * or default response.
      *
      * @param input the user input string to be routed
-     * @return the result from the matched agent, or the default response
-     * @throws NullPointerException if input is null
-     * @throws IllegalStateException if an agent returns null or if outputType requirements are not met
+     * @return the result from the matched agent, or the configured fallback; never null
+     * @throws NullPointerException  if input is null
+     * @throws IllegalStateException if the dispatched agent returns null
      */
     @Override
     public T invoke(String input) {
@@ -95,16 +100,35 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
 
         if (dispatchedAgent != null) {
             log.debug("router_dispatch agent={}", dispatchedAgent.getClass().getSimpleName());
-            return dispatchedAgent.execute(context);
+            return requireResult(dispatchedAgent, context);
         }
 
         if (defaultAgent != null) {
             log.info("router_fallback_agent agent={} category={}", defaultAgent.getClass().getSimpleName(), category);
-            return defaultAgent.execute(context);
+            return requireResult(defaultAgent, context);
         }
 
         log.info("router_fallback_response category={}", category);
         return defaultResponse;
+    }
+
+    /**
+     * Executes an agent and enforces the non-null guarantee of {@link AgenticWorkflow#invoke}.
+     *
+     * @param agent   the agent to execute
+     * @param context the handler context
+     * @return the agent's result, never null
+     * @throws IllegalStateException if the agent returns null
+     */
+    private T requireResult(RoutableSubAgent<T> agent, Map<String, String> context) {
+        T result = agent.execute(context);
+        if (result == null) {
+            throw new IllegalStateException(
+                    "RoutableSubAgent " + agent.getClass().getSimpleName()
+                            + " (route '" + agent.getRouteKey() + "') returned null; "
+                            + "AgenticWorkflow.invoke must never return null");
+        }
+        return result;
     }
 
     /**
@@ -201,7 +225,7 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
          * @throws NullPointerException if defaultResponse is null
          */
         public Builder<T> defaultResponse(T defaultResponse) {
-            this.defaultResponse = defaultResponse;
+            this.defaultResponse = Objects.requireNonNull(defaultResponse, "defaultResponse must not be null");
             return this;
         }
 
@@ -209,8 +233,9 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
          * Builds the ConditionalAgentRouter instance with the configured settings.
          *
          * @return the built ConditionalAgentRouter
-         * @throws NullPointerException if routingClient is null
-         * @throws IllegalStateException if no routes are added or if the prompt template is invalid
+         * @throws NullPointerException  if routingClient is null
+         * @throws IllegalStateException if no routes are added, if the prompt template is invalid,
+         *                               or if no fallback is configured
          */
         public ConditionalAgentRouter<T> build() {
             Objects.requireNonNull(routingClient, "A routingClient must be set.");
@@ -219,6 +244,15 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
             }
             if (!routingPromptTemplate.contains("{input}") || !routingPromptTemplate.contains("{routes}")) {
                 throw new IllegalStateException("routingPromptTemplate must contain both {input} and {routes} placeholders.");
+            }
+            // The route key comes from free-form LLM output, so no set of routes is exhaustive.
+            // Without a fallback an unrecognised category would return null, breaking the
+            // never-null guarantee of AgenticWorkflow.invoke.
+            if (defaultAgent == null && defaultResponse == null) {
+                throw new IllegalStateException(
+                        "A fallback is required: set defaultAgent(...) or defaultResponse(...). "
+                                + "The router classifies with an LLM, so it must handle categories "
+                                + "outside " + routes.keySet() + ".");
             }
 
             return new ConditionalAgentRouter<>(this);
