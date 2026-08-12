@@ -15,6 +15,21 @@ under `example/src/main/java/com/ronald/agent/example/`.
 on `project(":api")` and supplies the provider — `spring-ai-starter-model-openai` — so swapping in
 a different Spring AI model provider is a change to `:example` alone.
 
+## Architecture guides
+
+This README shows how to *run* each demo. For how each pattern *works* and how to build your own,
+see the library guides — each has UML class and sequence diagrams, the context keys in scope for
+every agent slot, an implementation walkthrough, and the failure modes:
+
+* **[`api/README.md`](api/README.md)** — the core abstractions, prompt rendering, context
+  conventions, exhaustion semantics, and the advisor
+* [Sequential chain](api/docs/sequential-agent-chain.md) ·
+  [Parallel orchestrator](api/docs/parallel-agent-orchestrator.md) ·
+  [Conditional router](api/docs/conditional-agent-router.md) ·
+  [Iterative refinement](api/docs/iterative-refinement-workflow.md) ·
+  [Plan & execute](api/docs/plan-and-execute-workflow.md) ·
+  [ReAct](api/docs/react-workflow.md)
+
 ## Prerequisites
 
 * **Java 21** (the build uses a toolchain, so Gradle will fetch it if needed)

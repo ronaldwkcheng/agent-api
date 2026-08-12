@@ -60,6 +60,12 @@ Tests must never require an API key or reach the network. `AgentApiApplicationTe
 
 ## Architecture
 
+Full per-pattern guides live in [`api/README.md`](api/README.md) and [`api/docs/`](api/docs) —
+one file per pattern, each with UML class and sequence diagrams, the context keys in scope for
+every agent slot, an implementation walkthrough, and the failure modes. **When you change a
+workflow's context keys, builder validation, defaults, or exhaustion behaviour, update its guide
+in the same commit.** The section below is the summary; the guides are the reference.
+
 This project implements six **agentic workflow patterns** built on top of Spring AI and Spring Boot. The central abstractions are:
 
 - **`AgenticWorkflow<T>`** — top-level interface: `T invoke(String input)`. All six patterns implement this.
