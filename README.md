@@ -155,8 +155,19 @@ iterations at `DEBUG`. **Up to 8 LLM calls**, plus local (free) tool invocations
 ./gradlew :api:test --tests "com.ronald.agent.workflow.*"    # a subset
 ```
 
-Qualify `--tests` filters with the module, as above: an unqualified filter runs against every
-module's `test` task, and Gradle fails the ones it matches nothing in.
+Qualify `--tests` filters with the module, as above. An unqualified filter runs against *every*
+module's `test` task, and Gradle fails the ones it matches nothing in — the workflow tests all
+live in `:api`, so filtering for them unqualified passes `:api:test` and then fails the build on
+`:example:test`:
+
+```
+> Task :api:test
+> Task :example:test FAILED
+
+* What went wrong:
+Execution failed for task ':example:test'.
+> No tests found for given includes: [com.ronald.agent.workflow.*](--tests filter)
+```
 
 Tests use stub `SubAgent`s rather than a real `ChatClient`, and `AgentApiApplicationTests`
 overrides the API key with a placeholder — so the build never contacts a model provider.
