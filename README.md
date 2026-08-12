@@ -2,7 +2,18 @@
 
 Six agentic workflow patterns built on Spring AI and Spring Boot — sequential, parallel,
 conditional, iterative, plan-and-execute, and ReAct. Each pattern ships with a runnable demo
-under `src/main/java/com/ronald/agent/example/`.
+under `example/src/main/java/com/ronald/agent/example/`.
+
+## Modules
+
+| Module     | What it is                                                                  |
+|------------|-----------------------------------------------------------------------------|
+| `:api`     | The library — `advisor`, `subagent`, `workflow`. No model provider, no `main`. |
+| `:example` | Runnable demos of each pattern plus the Spring Boot application that runs them. |
+
+`:api` is provider-agnostic: it compiles against `spring-ai-client-chat` only. `:example` depends
+on `project(":api")` and supplies the provider — `spring-ai-starter-model-openai` — so swapping in
+a different Spring AI model provider is a change to `:example` alone.
 
 ## Prerequisites
 
@@ -32,6 +43,9 @@ Each pattern's demo is a `CommandLineRunner` in `AgentApiApplication`, registere
 ```bash
 ./gradlew bootRun --args='--agent.demo=<pattern>'
 ```
+
+`bootRun` lives in `:example` — it is the only module with the Spring Boot plugin — so the
+unqualified task name resolves there.
 
 | `agent.demo`       | Pattern                        | Workflow class                |
 |--------------------|--------------------------------|-------------------------------|
@@ -137,9 +151,12 @@ iterations at `DEBUG`. **Up to 8 LLM calls**, plus local (free) tool invocations
 ## Build and test
 
 ```bash
-./gradlew build                                              # compile + test; no key, no network
-./gradlew test --tests "com.ronald.agent.workflow.*"         # a subset
+./gradlew build                                              # both modules; no key, no network
+./gradlew :api:test --tests "com.ronald.agent.workflow.*"    # a subset
 ```
+
+Qualify `--tests` filters with the module, as above: an unqualified filter runs against every
+module's `test` task, and Gradle fails the ones it matches nothing in.
 
 Tests use stub `SubAgent`s rather than a real `ChatClient`, and `AgentApiApplicationTests`
 overrides the API key with a placeholder — so the build never contacts a model provider.

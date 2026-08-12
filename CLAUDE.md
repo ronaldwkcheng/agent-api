@@ -17,13 +17,34 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run all tests
 ./gradlew test
 
-# Run a single test class
-./gradlew test --tests "com.ronald.agent.SomeTestClass"
+# Run a single test class (module-qualified)
+./gradlew :api:test --tests "com.ronald.agent.workflow.SomeTestClass"
 ```
 
-This is a non-web Spring Boot app — it depends on `spring-boot-starter`, not `-web`. There is no
-servlet container, so `bootRun` starts the context, runs whichever demo `agent.demo` selects, and
-exits. It uses Java 21 virtual threads and requires the `openai_api_key` environment variable.
+`bootRun` exists only in `:example`, so the unqualified task name resolves there.
+
+## Module Layout
+
+Two Gradle subprojects:
+
+| Module | Contents | Build plugin |
+|---|---|---|
+| `:api` | `advisor`, `subagent`, `workflow` — the library | `java-library` |
+| `:example` | `AgentApiApplication` + `example` package + `application.properties` | `org.springframework.boot` |
+
+`:api` is a plain library — no Spring Boot plugin, so no `bootJar` and no `bootRun`. It declares
+`api("org.springframework.ai:spring-ai-client-chat")` because its public signatures expose Spring
+AI types, and it deliberately names **no model provider**: choosing one is the application's job.
+`:example` adds `spring-ai-starter-model-openai` for the OpenAI autoconfiguration. Keep it that
+way — provider dependencies do not belong in `:api`.
+
+Plugin and BOM versions live in `gradle.properties` (`springBootVersion`, `springAiVersion`) and
+are wired into the plugin ids through `pluginManagement` in `settings.gradle.kts`, so no version
+literals belong in a module build file. There is no root `build.gradle.kts`.
+
+This is a non-web Spring Boot app — `:example` depends on `spring-boot-starter`, not `-web`. There
+is no servlet container, so `bootRun` starts the context, runs whichever demo `agent.demo` selects,
+and exits. It uses Java 21 virtual threads and requires the `openai_api_key` environment variable.
 Do not reintroduce `spring-boot-starter-web`; Spring AI pulls in `spring-web`/`spring-webflux`
 transitively for its HTTP clients and needs nothing more.
 
@@ -33,9 +54,9 @@ when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterativ
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
-Tests must never require an API key or reach the network. `AgentApiApplicationTests` overrides
-the key with a placeholder, and the workflow tests use stub `SubAgent`s rather than a
-`ChatClient`.
+Tests must never require an API key or reach the network. `AgentApiApplicationTests` (in
+`:example`) overrides the key with a placeholder, and the `:api` workflow tests use stub
+`SubAgent`s rather than a `ChatClient`.
 
 ## Architecture
 
@@ -75,4 +96,4 @@ Workflows pass state through a `Map<String, String>`. Key names are workflow-spe
 
 ### Example Usages
 
-Concrete end-to-end examples for all six patterns are in `src/main/java/com/ronald/agent/example/`. These show how to wire builders together and are the best reference when implementing new workflows.
+Concrete end-to-end examples for all six patterns are in `example/src/main/java/com/ronald/agent/example/`. These show how to wire builders together and are the best reference when implementing new workflows.
