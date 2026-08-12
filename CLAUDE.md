@@ -21,8 +21,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./gradlew test --tests "com.ronald.agent.SomeTestClass"
 ```
 
-The application starts on port 8080 using Java 21 virtual threads and requires the
-`openai_api_key` environment variable.
+This is a non-web Spring Boot app — it depends on `spring-boot-starter`, not `-web`. There is no
+servlet container, so `bootRun` starts the context, runs whichever demo `agent.demo` selects, and
+exits. It uses Java 21 virtual threads and requires the `openai_api_key` environment variable.
+Do not reintroduce `spring-boot-starter-web`; Spring AI pulls in `spring-web`/`spring-webflux`
+transitively for its HTTP clients and needs nothing more.
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,

@@ -45,7 +45,8 @@ Each pattern's demo is a `CommandLineRunner` in `AgentApiApplication`, registere
 Values are matched exactly — Spring's relaxed binding does not apply to `@ConditionalOnProperty`
 values, so `plan-and-execute` will not match `planAndExecute`.
 
-Without the property no demo is registered and the app simply boots on port 8080. Results are
+Without the property no demo is registered, so the app boots and exits immediately — there is no
+web server, only the Spring context (`spring-boot-starter`, not `-web`). Results are
 printed to stdout; the demo inputs are hardcoded in `AgentApiApplication`, so edit them there to
 try your own.
 
@@ -148,5 +149,4 @@ overrides the API key with a placeholder — so the build never contacts a model
 * [Spring AI — OpenAI Chat](https://docs.spring.io/spring-ai/reference/api/chat/openai-chat.html)
 * [Spring Boot Gradle Plugin](https://docs.spring.io/spring-boot/3.5.11/gradle-plugin)
 * [Create an OCI image](https://docs.spring.io/spring-boot/3.5.11/gradle-plugin/packaging-oci-image.html)
-* [Spring Web](https://docs.spring.io/spring-boot/3.5.11/reference/web/servlet.html)
 * [Official Gradle documentation](https://docs.gradle.org)
