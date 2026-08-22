@@ -48,6 +48,12 @@ and exits. It uses Java 21 virtual threads and requires the `openai_api_key` env
 Do not reintroduce `spring-boot-starter-web`; Spring AI pulls in `spring-web`/`spring-webflux`
 transitively for its HTTP clients and needs nothing more.
 
+Because of that transitive WebFlux, `spring.main.web-application-type=none` in
+`application.properties` is **load-bearing** — do not remove it. Without `starter-web` there is no
+WebMVC `DispatcherServlet`, so `WebApplicationType.deduceFromClasspath()` sees WebFlux's
+`DispatcherHandler` and infers `REACTIVE`. Nothing supplies a reactive server, so startup fails
+with "no `ReactiveWebServerFactory` bean defined in the context".
+
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
 `plan-and-execute`, or `react`. Values are matched exactly. Without the property no runner is
