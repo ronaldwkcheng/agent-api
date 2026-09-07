@@ -44,13 +44,15 @@ dependencies {
     // deliberately non-web app.
     implementation("org.springframework.ai:spring-ai-starter-mcp-client")
 
-    // Chroma, the vector store the RAG demo retrieves from. Deliberately the plain store library
-    // and not spring-ai-starter-vector-store-chroma: the starter's autoconfiguration builds a
-    // ChromaVectorStore eagerly, and that bean connects to Chroma and creates its collection
-    // while the context starts, so a plain boot and every @SpringBootTest would need a running
-    // Chroma on localhost:8000. ChromaConfiguration wires the same beans behind the agent.demo
-    // property instead.
-    implementation("org.springframework.ai:spring-ai-chroma-store")
+    // Chroma, the vector store the RAG demo retrieves from. Autoconfigures the ChromaApi and
+    // ChromaVectorStore beans from spring.ai.vectorstore.chroma.* — the same property names the
+    // companion ingestion project uses, so both address one collection from one spelling.
+    //
+    // Its ChromaVectorStore is an InitializingBean that connects and creates its collection as
+    // the context starts, which would make a plain boot and every @SpringBootTest depend on a
+    // running Chroma. That is held off by `spring.ai.vectorstore.type` in application.properties,
+    // the autoconfiguration's own conditional — see the note there.
+    implementation("org.springframework.ai:spring-ai-starter-vector-store-chroma")
 
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")

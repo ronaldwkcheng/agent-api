@@ -26,13 +26,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * spawning a child process for a stdio one — so the test states the requirement rather than
  * inheriting it.</p>
  *
- * <p>Chroma needs no such flag: {@code ChromaConfiguration} is gated on {@code agent.demo=rag},
- * so with that property unset there is no {@code ChromaVectorStore} bean to connect with. That
- * gate is what {@link #noVectorStoreIsRegisteredWithoutTheDemoProperty()} guards.</p>
+ * <p>Chroma's vector store is pinned off on the same principle. Its autoconfiguration defaults to
+ * <b>on</b> once the starter is on the classpath — {@code matchIfMissing = true} — and its store
+ * connects to Chroma and creates its collection during startup, so only the
+ * {@code spring.ai.vectorstore.type} value keeps this build off the network.
+ * {@code application.properties} sets it to {@code none} already; the test states the requirement
+ * rather than inheriting it, and {@link #noVectorStoreIsRegisteredWithoutChromaSelected()}
+ * guards it.</p>
  */
 @SpringBootTest(properties = {
         "spring.ai.openai.api-key=test-key-never-used",
-        "spring.ai.mcp.client.enabled=false"
+        "spring.ai.mcp.client.enabled=false",
+        "spring.ai.vectorstore.type=none"
 })
 class AgentApiApplicationTests {
 
@@ -44,14 +49,16 @@ class AgentApiApplicationTests {
     }
 
     @Test
-    void noVectorStoreIsRegisteredWithoutTheDemoProperty() {
+    void noVectorStoreIsRegisteredWithoutChromaSelected() {
         // A ChromaVectorStore bean is an InitializingBean that connects to Chroma and creates its
         // collection during startup, so one existing here would make every build depend on a
-        // Chroma running on localhost:8000.
+        // Chroma running on localhost:8000. Unlike the MCP client, this autoconfiguration is on
+        // unless told otherwise, so the property is the only thing standing between the build and
+        // the network.
         assertEquals(0, context.getBeanNamesForType(VectorStore.class).length,
-                "no VectorStore may be registered without agent.demo=rag");
+                "no VectorStore may be registered unless spring.ai.vectorstore.type=chroma");
         assertEquals(0, context.getBeanNamesForType(ChromaApi.class).length,
-                "no ChromaApi may be registered without agent.demo=rag");
+                "no ChromaApi may be registered unless spring.ai.vectorstore.type=chroma");
     }
 
     @Test

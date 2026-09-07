@@ -39,18 +39,34 @@ Spring AI types, and it deliberately names **no model provider and no vector sto
 those is the application's job. Both are interface modules — `ChatClient`/`ToolCallback` from the
 first, `VectorStore`/`SearchRequest` from the second.
 `:example` adds `spring-ai-starter-model-openai` for the OpenAI autoconfiguration,
-`spring-ai-starter-mcp-client` for MCP tool servers, and `spring-ai-chroma-store` for the RAG
-demo's vector store. Keep it that way — provider, store and transport dependencies do not belong
-in `:api`.
+`spring-ai-starter-mcp-client` for MCP tool servers, and `spring-ai-starter-vector-store-chroma`
+for the RAG demo's vector store. Keep it that way — provider, store and transport dependencies do
+not belong in `:api`.
 
-The Chroma dependency is deliberately the plain `spring-ai-chroma-store` and **not**
-`spring-ai-starter-vector-store-chroma`. The starter's autoconfiguration builds a
-`ChromaVectorStore` eagerly; that bean is an `InitializingBean` which connects to Chroma and
-creates its collection as the context starts, so `./gradlew build` and every `@SpringBootTest`
-would need a Chroma on `localhost:8000`. `ChromaConfiguration` in `:example` wires the same beans
-behind `@ConditionalOnProperty(name = "agent.demo", havingValue = "rag")` instead, which is
-enforced by `AgentApiApplicationTests.noVectorStoreIsRegisteredWithoutTheDemoProperty`. Do not
-swap in the starter, and do not remove that condition.
+`spring.ai.vectorstore.type=none` in `application.properties` is **load-bearing**, and is the
+third invariant of this kind alongside the demo property and the MCP flag —
+but it is the only one that defaults the *wrong* way.
+`ChromaVectorStoreAutoConfiguration` is annotated
+`@ConditionalOnProperty(name = "spring.ai.vectorstore.type", havingValue = "chroma", matchIfMissing = true)`,
+so it is **on** as soon as the starter is on the classpath. Its `ChromaVectorStore` is an
+`InitializingBean` that connects to Chroma and creates its tenant, database and collection while
+the context starts, so without that property `./gradlew build` and every `@SpringBootTest` would
+need a Chroma on `localhost:8000`. Any value but `chroma` disables it. Enable it per run
+(`--spring.ai.vectorstore.type=chroma`), never by changing the default;
+`AgentApiApplicationTests` pins it off explicitly and
+`noVectorStoreIsRegisteredWithoutChromaSelected` asserts no `VectorStore` or `ChromaApi` bean
+exists.
+
+Consequently the `rag` demo takes **two** flags, the same shape the react demo uses for MCP:
+`--agent.demo=rag --spring.ai.vectorstore.type=chroma`. `RagSubAgentExample` injects the store as
+an `ObjectProvider<VectorStore>` so a forgotten flag prints instructions instead of failing bean
+resolution.
+
+Do not hand-roll the store with `ChromaVectorStore.builder(...)`: the autoconfiguration also
+supplies a `BatchingStrategy` and the observation registry, `ChromaVectorStore.afterPropertiesSet()`
+already does get-or-create for tenant, database and collection, and using
+`spring.ai.vectorstore.chroma.*` keeps these property names identical to the companion ingestion
+project's.
 
 Plugin and BOM versions live in `gradle.properties` (`springBootVersion`, `springAiVersion`) and
 are wired into the plugin ids through `pluginManagement` in `settings.gradle.kts`, so no version
