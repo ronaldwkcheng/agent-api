@@ -143,20 +143,33 @@ back to its id; `score` is omitted entirely when the store did not set one.
 
 ### 1. Supply a store
 
-`:api` names no store. The application picks one and exposes it as a `VectorStore` bean — Chroma,
-in `:example`:
+`:api` names no store — it needs a `VectorStore` bean and does not care where it came from. The
+cheapest way to get one is a Spring AI vector-store starter and its properties; no
+`@Configuration` of your own. `:example` uses Chroma:
 
-```java
-@Bean
-public VectorStore chromaVectorStore(ChromaApi api, EmbeddingModel embeddingModel) {
-    return ChromaVectorStore.builder(api, embeddingModel)
-            .tenantName("SpringAiTenant")
-            .databaseName("SpringAiDatabase")
-            .collectionName("chroma-doc")
-            .initializeSchema(true)
-            .build();
-}
+```properties
+# build.gradle.kts: implementation("org.springframework.ai:spring-ai-starter-vector-store-chroma")
+spring.ai.vectorstore.chroma.client.host=http://localhost
+spring.ai.vectorstore.chroma.client.port=8000
+spring.ai.vectorstore.chroma.tenant-name=SpringAiTenant
+spring.ai.vectorstore.chroma.database-name=SpringAiDatabase
+spring.ai.vectorstore.chroma.collection-name=chroma-doc
+spring.ai.vectorstore.chroma.initialize-schema=true
 ```
+
+Hand-rolling the bean with `ChromaVectorStore.builder(...)` is possible but loses things worth
+having: the autoconfiguration also supplies a `BatchingStrategy` and the observation registry.
+Note too that the store creates its own tenant, database and collection —
+`ChromaVectorStore.afterPropertiesSet()` does get-or-create for all three, so provisioning code
+around it is redundant.
+
+**The eager-connection trap.** These stores connect during context startup, and their
+autoconfigurations are typically `matchIfMissing = true` — on by default once the starter is on
+the classpath. That makes every test and every plain boot depend on a running store unless you
+gate it. Chroma's own hook is `spring.ai.vectorstore.type`; set it to anything but `chroma` to
+switch the autoconfiguration off, and pass `--spring.ai.vectorstore.type=chroma` on the runs that
+want it. Inject the store as an `ObjectProvider<VectorStore>` so its absence is a message rather
+than a bean-resolution failure.
 
 ### 2. Build the agent
 

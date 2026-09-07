@@ -14,8 +14,8 @@ under `example/src/main/java/com/ronald/agent/example/`.
 `:api` is provider-agnostic: it compiles against the two Spring AI interface modules,
 `spring-ai-client-chat` and `spring-ai-vector-store`, and names neither a model provider nor a
 vector store. `:example` depends on `project(":api")` and supplies both —
-`spring-ai-starter-model-openai` and `spring-ai-chroma-store` — so swapping either is a change to
-`:example` alone.
+`spring-ai-starter-model-openai` and `spring-ai-starter-vector-store-chroma` — so swapping either
+is a change to `:example` alone.
 
 ## Architecture guides
 
@@ -196,6 +196,9 @@ Watch the scratchpad build up across iterations at `DEBUG`. **Up to 8 LLM calls*
 >
 > Skip either and every question retrieves nothing. The runner checks the document count first
 > and says so plainly rather than paying to embed a query that can only come back empty.
+>
+> The demo also takes a **second flag**, `--spring.ai.vectorstore.type=chroma`, to switch on
+> Chroma's autoconfiguration for the run — see [why](#why-the-demo-takes-two-flags).
 
 ```bash
 # 1. start Chroma — from E:\dev\spring_ai_workspace\chroma-doc, which has the compose file
@@ -206,8 +209,8 @@ docker compose ps                                # STATUS should read "healthy"
 ./gradlew bootRun
 curl -X POST "http://localhost:8080/api/ingestion?path=C:/dev/docs"
 
-# 3. then, back here, ask a question
-./gradlew bootRun --args='--agent.demo=rag'
+# 3. then, back here, ask a question — note the second flag
+./gradlew bootRun --args='--agent.demo=rag --spring.ai.vectorstore.type=chroma'
 ```
 
 `POST /api/ingestion?path=<directory>` is synchronous — it returns once every file under `path`
@@ -274,8 +277,9 @@ third-party server a prompt-injection surface that local methods are not. The
 
 ## Retrieving from Chroma
 
-`:example` carries `spring-ai-chroma-store` and wires the `VectorStore` in
-`ChromaConfiguration`. **This project reads from Chroma and never writes to it** — the store and
+`:example` carries `spring-ai-starter-vector-store-chroma`, so the `ChromaApi` and
+`ChromaVectorStore` beans are Spring AI's own autoconfiguration — there is no hand-rolled
+`@Configuration` for them. **This project reads from Chroma and never writes to it** — the store and
 its contents are owned by the companion project at `E:\dev\spring_ai_workspace\chroma-doc`, which
 carries the `docker-compose.yml` and the ingestion pipeline:
 
@@ -290,18 +294,74 @@ A plain `docker run -d --name chroma -p 8000:8000 chromadb/chroma:latest` works 
 compose file adds a persistent volume and a healthcheck, and keeps the two projects pointing at
 the same instance.
 
-The connection settings live in `application.properties`:
+The connection settings live in `application.properties`, under Spring AI's own keys:
 
 | Property | Value |
 |---|---|
-| `agent.rag.chroma.url` | `http://localhost:8000` |
-| `agent.rag.chroma.tenant` | `SpringAiTenant` |
-| `agent.rag.chroma.database` | `SpringAiDatabase` |
-| `agent.rag.chroma.collection` | `chroma-doc` |
+| `spring.ai.vectorstore.chroma.client.host` | `http://localhost` |
+| `spring.ai.vectorstore.chroma.client.port` | `8000` |
+| `spring.ai.vectorstore.chroma.tenant-name` | `SpringAiTenant` |
+| `spring.ai.vectorstore.chroma.database-name` | `SpringAiDatabase` |
+| `spring.ai.vectorstore.chroma.collection-name` | `chroma-doc` |
+| `spring.ai.vectorstore.chroma.initialize-schema` | `true` |
 
-These match `chroma-doc`'s own `spring.ai.vectorstore.chroma.*` settings, which is what makes
-both projects address the same collection. The tenant, database and collection are created here
-if missing, so this side never fails on a fresh Chroma — but nothing on this side populates them.
+These are **character-for-character the same keys `chroma-doc` sets**, which is what makes both
+projects address one collection from one spelling. `ChromaVectorStore` does get-or-create for the
+tenant, database *and* collection itself, so this side never fails on a fresh Chroma — but nothing
+on this side populates them.
+
+### Tuning the search
+
+How the search is bounded is separate, under a local namespace — these are the agent's retrieval
+knobs, and Spring AI has no property for either:
+
+| Property | Default | What it does |
+|---|---|---|
+| `agent.rag.top-k` | `4` | How many passages to retrieve |
+| `agent.rag.similarity-threshold` | `0.0` | The floor a passage must clear, 0.0–1.0 |
+
+Both are validated when the context starts, so a bad value fails the boot with a precise message
+rather than the first question. Override either per run without editing the file:
+
+```bash
+./gradlew bootRun --args='--agent.demo=rag --spring.ai.vectorstore.type=chroma \
+    --agent.rag.top-k=9 --agent.rag.similarity-threshold=0.45'
+```
+
+The runner prints the bounds it used above each answer, so a tuning session is self-documenting.
+
+Two things to know while tuning. **`top-k` is a token lever, not a retrieval lever** — every
+passage retrieved is rendered into the prompt in full, so 4 medium passages and 20 are very
+different requests while the search itself barely moves. And **`0.0` is deliberate as a
+threshold default**: a useful floor depends on the embedding model *and* the corpus, so a number
+that works in one deployment means nothing in another. Measure it against what is actually in
+`chroma-doc` before raising it — set it too high and questions the corpus does answer come back
+with "no relevant passages found" instead.
+
+### Why the demo takes two flags
+
+`ChromaVectorStoreAutoConfiguration` is annotated:
+
+```java
+@ConditionalOnProperty(name = "spring.ai.vectorstore.type", havingValue = "chroma",
+                       matchIfMissing = true)
+```
+
+`matchIfMissing = true` means it is **on** the moment the starter is on the classpath — and its
+store connects to Chroma during startup. Left alone, `./gradlew build` and every
+`@SpringBootTest` would need a Chroma on `localhost:8000`. So `application.properties` pins
+`spring.ai.vectorstore.type=none` (any value but `chroma` disables it), and the demo turns it back
+on for the one run that wants it:
+
+```bash
+./gradlew bootRun --args='--agent.demo=rag --spring.ai.vectorstore.type=chroma'
+```
+
+This is the same two-flag shape the `react` demo uses for MCP, and it is the only one of the
+three load-bearing properties that defaults the *wrong* way — the demo selector and the MCP
+client both default to off on their own. Forget the flag and `RagSubAgentExample` says so and
+exits; it injects the store as an `ObjectProvider<VectorStore>` rather than failing bean
+resolution.
 
 ### The embedding model must match
 
@@ -324,14 +384,9 @@ simply unrelated to the question, and no amount of prompt tuning will fix it. On
 `text-embedding-3-large` (3072) fails loudly. If you change the model in `chroma-doc`, change it
 here and re-ingest.
 
-Two deliberate choices are worth knowing about if you extend this:
-
-* The **plain store library, not `spring-ai-starter-vector-store-chroma`.** The starter's
-  autoconfiguration builds a `ChromaVectorStore` eagerly, and that bean connects to Chroma and
-  creates its collection during startup — which would make `./gradlew build` and every
-  `@SpringBootTest` depend on a running Chroma.
-* **`ChromaConfiguration` is gated on `agent.demo=rag`**, for the same reason. With the property
-  unset there is no `VectorStore` bean at all, which `AgentApiApplicationTests` asserts.
+`AgentApiApplicationTests.noVectorStoreIsRegisteredWithoutChromaSelected` asserts that no
+`VectorStore` or `ChromaApi` bean exists with the property off, so the build cannot quietly
+regain a dependency on a running Chroma.
 
 ---
 

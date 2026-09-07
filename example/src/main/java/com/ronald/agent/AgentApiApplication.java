@@ -26,9 +26,17 @@ import java.util.concurrent.Executors;
  * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code rag}. Values are matched
  * exactly, so relaxed binding does not apply — spell them as written.</p>
  *
- * <p>{@code rag} is the one demo with a prerequisite beyond the API key: it needs a Chroma running
- * on the URL in {@code application.properties}, already populated by the ingestion app at
- * {@code E:\dev\spring_ai_workspace\chroma-doc}. See {@link ChromaConfiguration}.</p>
+ * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
+ * second flag. It needs a Chroma running on the host in {@code application.properties}, already
+ * populated by the ingestion app at {@code E:\dev\spring_ai_workspace\chroma-doc}, and Chroma's
+ * autoconfiguration switched on for the run:</p>
+ *
+ * <pre>{@code
+ * ./gradlew bootRun --args='--agent.demo=rag --spring.ai.vectorstore.type=chroma'
+ * }</pre>
+ *
+ * <p>See {@link RagSubAgentExample} and the vector-store block in
+ * {@code application.properties}.</p>
  */
 @SpringBootApplication
 public class AgentApiApplication {
@@ -151,6 +159,21 @@ public class AgentApiApplication {
         return args -> {
             System.out.println("\n=== RagSubAgentExample result ===");
 
+            // Chroma's autoconfiguration is off by default, so "never connected" and "connected
+            // but empty" are both possible and need telling apart.
+            if (!service.hasVectorStore()) {
+                System.out.println("No VectorStore was wired for this run, so there is nothing to "
+                        + "retrieve from.\n"
+                        // Plain ASCII on purpose: System.out uses the platform charset, so an em
+                        // dash here arrives as a replacement character on a Windows console.
+                        + "\nChroma's autoconfiguration is off by default - it connects during "
+                        + "startup, which would make every build need a running Chroma. Add the "
+                        + "flag:\n"
+                        + "  ./gradlew bootRun --args='--agent.demo=rag "
+                        + "--spring.ai.vectorstore.type=chroma'");
+                return;
+            }
+
             // This demo retrieves but never ingests, so an empty collection has no path to an
             // answer — every question would come back with the agent's no-documents reply after
             // paying to embed the query. Say so instead.
@@ -166,8 +189,10 @@ public class AgentApiApplication {
                         + "\nThen run this demo again.");
                 return;
             }
+            // Print the bounds: they come from agent.rag.* now, so a tuning run should show what
+            // it actually searched with.
             System.out.println("Retrieving from '" + service.collectionName() + "' ("
-                    + documentCount + " documents)\n");
+                    + documentCount + " documents) with " + service.searchBounds() + "\n");
 
             String question = "Create an MCQ quiz from the financial statements";
             System.out.println("Question: " + question);
