@@ -24,6 +24,9 @@ bin/
 
 ### IntelliJ IDEA ###
 .idea
+# Run/debug configurations. Drop the ignore for one you want to share with the team —
+# a .run/*.run.xml is portable, unlike the rest of .idea.
+.run/
 *.iws
 *.iml
 *.ipr
