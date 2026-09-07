@@ -11,9 +11,11 @@ under `example/src/main/java/com/ronald/agent/example/`.
 | `:api`     | The library — `advisor`, `subagent`, `workflow`. No model provider, no `main`. |
 | `:example` | Runnable demos of each pattern plus the Spring Boot application that runs them. |
 
-`:api` is provider-agnostic: it compiles against `spring-ai-client-chat` only. `:example` depends
-on `project(":api")` and supplies the provider — `spring-ai-starter-model-openai` — so swapping in
-a different Spring AI model provider is a change to `:example` alone.
+`:api` is provider-agnostic: it compiles against the two Spring AI interface modules,
+`spring-ai-client-chat` and `spring-ai-vector-store`, and names neither a model provider nor a
+vector store. `:example` depends on `project(":api")` and supplies both —
+`spring-ai-starter-model-openai` and `spring-ai-chroma-store` — so swapping either is a change to
+`:example` alone.
 
 ## Architecture guides
 
@@ -28,12 +30,15 @@ every agent slot, an implementation walkthrough, and the failure modes:
   [Conditional router](api/docs/conditional-agent-router.md) ·
   [Iterative refinement](api/docs/iterative-refinement-workflow.md) ·
   [Plan & execute](api/docs/plan-and-execute-workflow.md) ·
-  [ReAct](api/docs/react-workflow.md)
+  [ReAct](api/docs/react-workflow.md) ·
+  [RAG](api/docs/rag-sub-agent.md)
 
 ## Prerequisites
 
 * **Java 21** (the build uses a toolchain, so Gradle will fetch it if needed)
 * **An OpenAI API key**, exported as `openai_api_key`
+* **Docker**, for the `rag` demo only — it retrieves from a local Chroma, started and populated
+  from the companion project at `E:\dev\spring_ai_workspace\chroma-doc`
 
 ```bash
 # bash / Git Bash
@@ -47,8 +52,9 @@ $env:openai_api_key = "sk-..."
 
 > **The demos make real, billable OpenAI calls.** Several are multi-step — `plan-and-execute`
 > runs up to 6 chained LLM calls, `iterative` up to 7 refine+evaluate rounds, and `react` up to
-> 8 reasoning steps. Build and test, by contrast, need no key and make no network calls:
-> `./gradlew build` is free and offline.
+> 8 reasoning steps. `rag` is the cheapest at one embedding call plus one chat call. Build and
+> test, by contrast, need no key and make no network calls: `./gradlew build` is free and
+> offline.
 
 ## Running a demo
 
@@ -70,9 +76,13 @@ unqualified task name resolves there.
 | `iterative`        | Generate → evaluate loop       | `IterativeRefinementWorkflow` |
 | `plan-and-execute` | Plan → execute → synthesize    | `PlanAndExecuteWorkflow`      |
 | `react`            | Thought → action → observation | `ReActWorkflow`               |
+| `rag`              | Retrieve → ground → answer     | `RagSubAgent`                 |
 
 Values are matched exactly — Spring's relaxed binding does not apply to `@ConditionalOnProperty`
 values, so `plan-and-execute` will not match `planAndExecute`.
+
+`rag` is the only demo with an external dependency beyond the model provider: it needs a Chroma
+running locally (see [below](#retrieving-from-chroma)).
 
 Without the property no demo is registered, so the app boots and exits immediately — there is no
 web server, only the Spring context (`spring-boot-starter`, not `-web`). Results are
@@ -175,6 +185,46 @@ Watch the scratchpad build up across iterations at `DEBUG`. **Up to 8 LLM calls*
 
 ---
 
+### `rag` — Retrieve → ground → answer
+
+> **Two things must be in place before this demo can answer anything.** It only reads — it never
+> writes to Chroma — so both the store and its contents come from elsewhere:
+>
+> 1. **Chroma must be running** on `localhost:8000`.
+> 2. **`chroma-doc` must be populated**, by running the ingestion app at
+>    `E:\dev\spring_ai_workspace\chroma-doc` and calling its `IngestionController`.
+>
+> Skip either and every question retrieves nothing. The runner checks the document count first
+> and says so plainly rather than paying to embed a query that can only come back empty.
+
+```bash
+# 1. start Chroma — from E:\dev\spring_ai_workspace\chroma-doc, which has the compose file
+docker compose up -d
+docker compose ps                                # STATUS should read "healthy"
+
+# 2. ingest documents into the chroma-doc collection (same project, port 8080)
+./gradlew bootRun
+curl -X POST "http://localhost:8080/api/ingestion?path=C:/dev/docs"
+
+# 3. then, back here, ask a question
+./gradlew bootRun --args='--agent.demo=rag'
+```
+
+`POST /api/ingestion?path=<directory>` is synchronous — it returns once every file under `path`
+has been embedded and stored. In PowerShell use `curl.exe`, not `curl`, which is an alias for
+`Invoke-WebRequest` and takes different arguments. That project's own README covers the reader
+options and how to inspect or clear the collection.
+
+`RagSubAgentExample` then embeds the question, semantic-searches `chroma-doc` for the 4 nearest
+passages, and asks the model to answer from those passages alone. The runner prints what was
+retrieved — source and score per passage — above the answer, so you can see what the answer was
+actually built on.
+
+**1 embedding call + 1 LLM call.** See [Retrieving from Chroma](#retrieving-from-chroma) for the
+connection settings and the embedding-model constraint that ties the two projects together.
+
+---
+
 ## Connecting MCP tool servers
 
 `:example` carries `spring-ai-starter-mcp-client`, which autoconfigures one
@@ -219,6 +269,69 @@ tools is expensive at 8 steps — register a filtered subset with `toolCallbacks
 instead. And tool output re-enters the next prompt through the scratchpad, which makes a
 third-party server a prompt-injection surface that local methods are not. The
 [ReAct guide](api/docs/react-workflow.md) covers both.
+
+---
+
+## Retrieving from Chroma
+
+`:example` carries `spring-ai-chroma-store` and wires the `VectorStore` in
+`ChromaConfiguration`. **This project reads from Chroma and never writes to it** — the store and
+its contents are owned by the companion project at `E:\dev\spring_ai_workspace\chroma-doc`, which
+carries the `docker-compose.yml` and the ingestion pipeline:
+
+```bash
+cd E:\dev\spring_ai_workspace\chroma-doc
+docker compose up -d                             # Chroma on localhost:8000, persistent volume
+./gradlew bootRun                                # the ingestion app, on localhost:8080
+curl -X POST "http://localhost:8080/api/ingestion?path=C:/dev/docs"
+```
+
+A plain `docker run -d --name chroma -p 8000:8000 chromadb/chroma:latest` works too, but the
+compose file adds a persistent volume and a healthcheck, and keeps the two projects pointing at
+the same instance.
+
+The connection settings live in `application.properties`:
+
+| Property | Value |
+|---|---|
+| `agent.rag.chroma.url` | `http://localhost:8000` |
+| `agent.rag.chroma.tenant` | `SpringAiTenant` |
+| `agent.rag.chroma.database` | `SpringAiDatabase` |
+| `agent.rag.chroma.collection` | `chroma-doc` |
+
+These match `chroma-doc`'s own `spring.ai.vectorstore.chroma.*` settings, which is what makes
+both projects address the same collection. The tenant, database and collection are created here
+if missing, so this side never fails on a fresh Chroma — but nothing on this side populates them.
+
+### The embedding model must match
+
+The two projects have to embed with the same model, and this is the least visible way to break a
+RAG pipeline, so it is worth stating exactly:
+
+| Project | Spring AI | Property | Value |
+|---|---|---|---|
+| `chroma-doc` (writes) | 2.0.x | `spring.ai.openai.embedding.model` | `text-embedding-3-small` |
+| `agent-api` (reads) | 1.1.2 | `spring.ai.openai.embedding.options.model` | `text-embedding-3-small` |
+
+The **property paths differ and are not interchangeable**. Spring AI 2.0.x binds `model` directly
+on `OpenAiEmbeddingProperties`; 1.1.2 exposes it only through `options`. Writing
+`spring.ai.openai.embedding.model` in *this* project binds to nothing, silently leaving the
+default `text-embedding-ada-002` in place.
+
+Which is the trap: `ada-002` and `text-embedding-3-small` both produce 1536-dimension vectors, so
+a mismatch raises no error anywhere. Chroma still returns its `topK` nearest neighbours; they are
+simply unrelated to the question, and no amount of prompt tuning will fix it. Only
+`text-embedding-3-large` (3072) fails loudly. If you change the model in `chroma-doc`, change it
+here and re-ingest.
+
+Two deliberate choices are worth knowing about if you extend this:
+
+* The **plain store library, not `spring-ai-starter-vector-store-chroma`.** The starter's
+  autoconfiguration builds a `ChromaVectorStore` eagerly, and that bean connects to Chroma and
+  creates its collection during startup — which would make `./gradlew build` and every
+  `@SpringBootTest` depend on a running Chroma.
+* **`ChromaConfiguration` is gated on `agent.demo=rag`**, for the same reason. With the property
+  unset there is no `VectorStore` bean at all, which `AgentApiApplicationTests` asserts.
 
 ---
 

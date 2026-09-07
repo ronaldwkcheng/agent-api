@@ -32,6 +32,12 @@ dependencies {
     // the application's job.
     api("org.springframework.ai:spring-ai-client-chat")
 
+    // The VectorStore/SearchRequest interfaces RagSubAgent retrieves through, and nothing more.
+    // This is the retrieval-side counterpart of spring-ai-client-chat: an interface module, not a
+    // store. No Chroma, pgvector or any other implementation is named here — picking the store is
+    // the application's job, exactly as picking the model provider is.
+    api("org.springframework.ai:spring-ai-vector-store")
+
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

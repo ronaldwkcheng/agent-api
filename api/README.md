@@ -1,8 +1,10 @@
 # `:api` — Agentic Workflow Library
 
-Six agentic workflow patterns built on Spring AI. This module is a plain `java-library`: no
-Spring Boot plugin, no autoconfiguration, no `main`, and **no model provider** — it compiles
-against `spring-ai-client-chat` alone, and the application supplies the provider.
+Six agentic workflow patterns and a retrieval-augmented generation agent, built on Spring AI.
+This module is a plain `java-library`: no Spring Boot plugin, no autoconfiguration, no `main`,
+and **no model provider and no vector store** — it compiles against `spring-ai-client-chat` and
+`spring-ai-vector-store`, the two interface modules, and the application supplies both
+implementations.
 
 | Guide | Class | Shape |
 |---|---|---|
@@ -12,9 +14,14 @@ against `spring-ai-client-chat` alone, and the application supplies the provider
 | [Iterative refinement](docs/iterative-refinement-workflow.md) | `IterativeRefinementWorkflow` | refine ⇄ evaluate, until PASS |
 | [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize |
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
+| [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
 
 Each guide covers the architecture, a UML class and sequence diagram, the context keys the
 pattern reads and writes, a full implementation walkthrough, and the failure modes.
+
+`RagSubAgent` is the odd one out: an *agent* rather than an orchestration, it implements both
+`SubAgent<String>` and `AgenticWorkflow<String>`, so it answers on its own or serves as one step
+of any of the six.
 
 ---
 
@@ -70,6 +77,13 @@ classDiagram
         +getRouteKey() String
     }
 
+    class RagSubAgent {
+        -VectorStore vectorStore
+        +invoke(String) String
+        +retrieve(String) List~Document~
+        +builder() Builder
+    }
+
     SubAgent <|-- RoutableSubAgent
     SubAgent <|.. AbstractPromptSubAgent
     AbstractPromptSubAgent <|-- AbstractPromptRoutableAgent
@@ -77,6 +91,8 @@ classDiagram
     AbstractPromptSubAgent <|-- DefaultPromptSubAgent
     AbstractPromptRoutableAgent <|-- DefaultPromptRoutableAgent
     RoutableSubAgent <|.. SimpleRouteFallbackAgent
+    AbstractPromptSubAgent <|-- RagSubAgent
+    AgenticWorkflow <|.. RagSubAgent
     AgenticWorkflow ..> SubAgent : orchestrates
 ```
 
