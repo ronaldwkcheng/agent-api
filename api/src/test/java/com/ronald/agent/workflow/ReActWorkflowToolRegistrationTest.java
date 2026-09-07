@@ -14,14 +14,9 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 /**
  * Verifies that {@link ReActWorkflow.Builder} accepts ready-made {@link ToolCallback}s, not only
@@ -77,9 +72,22 @@ class ReActWorkflowToolRegistrationTest {
 
     /** Mocks the one structured-output call the internal thinker agent makes. */
     private static ChatClient chatClientThinking(ReActWorkflow.ReActThought thought) {
+        return chatClientThinking(thought, new ArrayList<>());
+    }
+
+    /**
+     * As above, but appends every rendered user prompt to {@code renderedPrompts} — the only way
+     * to see what the {@code tools} and {@code scratchpad} placeholders actually resolved to.
+     */
+    private static ChatClient chatClientThinking(ReActWorkflow.ReActThought thought,
+                                                 List<String> renderedPrompts) {
         ChatClient chatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
-        when(chatClient.prompt().messages(any(Message.class)).call().entity(any(Class.class)))
-                .thenReturn(thought);
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt();
+        when(spec.messages(any(Message.class))).thenAnswer(invocation -> {
+            renderedPrompts.add(invocation.getArgument(0, Message.class).getText());
+            return spec;
+        });
+        when(spec.call().entity(any(Class.class))).thenReturn(thought);
         return chatClient;
     }
 
@@ -96,7 +104,12 @@ class ReActWorkflowToolRegistrationTest {
 
     /** Runs exactly one thought/action/observation step and discards the partial result. */
     private static void runOneStep(ReActWorkflow.Builder builder) {
-        builder.maxSteps(1)
+        runSteps(builder, 1);
+    }
+
+    /** Runs {@code steps} thought/action/observation steps and discards the partial result. */
+    private static void runSteps(ReActWorkflow.Builder builder, int steps) {
+        builder.maxSteps(steps)
                 .exhaustionPolicy(ExhaustionPolicy.RETURN_PARTIAL)
                 .build()
                 .invoke("a question");
@@ -182,5 +195,62 @@ class ReActWorkflowToolRegistrationTest {
                 () -> ReActWorkflow.builder().toolCallbacks((ToolCallback[]) null));
         assertThrows(NullPointerException.class,
                 () -> ReActWorkflow.builder().toolCallbacks(new ToolCallback[]{null}));
+    }
+
+    // -------------------------------------------------------------------------
+    // MCP-only builds: no @Tool-annotated object at all
+    // -------------------------------------------------------------------------
+
+    @Test
+    void providerAloneSatisfiesTheAtLeastOneToolRequirement() {
+        assertDoesNotThrow(() -> ReActWorkflow.builder()
+                        .chatClient(mock(ChatClient.class))
+                        .toolCallbackProvider(ToolCallbackProvider.from(
+                                new RecordingToolCallback("mcp_search", "one result")))
+                        .build(),
+                "an MCP provider must be a complete tool set on its own — tools(Object...) is "
+                        + "not a prerequisite");
+    }
+
+    @Test
+    void mcpOnlyBuildRendersEveryProviderToolIntoThePrompt() {
+        List<String> prompts = new ArrayList<>();
+        RecordingToolCallback read  = new RecordingToolCallback("mcp_read", "file contents");
+        RecordingToolCallback write = new RecordingToolCallback("mcp_write", "written");
+
+        runOneStep(ReActWorkflow.builder()
+                .chatClient(chatClientThinking(thoughtCalling("mcp_read", "{\"query\":\"x\"}"), prompts))
+                .toolCallbackProvider(ToolCallbackProvider.from(read, write)));
+
+        assertEquals(1, prompts.size());
+        String prompt = prompts.getFirst();
+        for (RecordingToolCallback tool : List.of(read, write)) {
+            ToolDefinition definition = tool.getToolDefinition();
+            assertTrue(prompt.contains(definition.name()), () -> "prompt omits " + definition.name());
+            assertTrue(prompt.contains(definition.description()),
+                    () -> "prompt omits the description of " + definition.name());
+            assertTrue(prompt.contains(definition.inputSchema()),
+                    () -> "prompt omits the input schema of " + definition.name());
+        }
+    }
+
+    @Test
+    void mcpOnlyLoopNamesTheAvailableToolsWhenTheModelMisnamesOne() {
+        List<String> prompts = new ArrayList<>();
+        RecordingToolCallback read = new RecordingToolCallback("spring_ai_mcp_client_files_read", "file contents");
+
+        // MCP callbacks are named after their server, so a model that shortens the name reaches
+        // no tool at all — the loop has to say so rather than fail the step silently.
+        runSteps(ReActWorkflow.builder()
+                .chatClient(chatClientThinking(thoughtCalling("read", "{\"query\":\"x\"}"), prompts))
+                .toolCallbackProvider(ToolCallbackProvider.from(read)), 2);
+
+        assertTrue(read.invocations.isEmpty(), "no callback should run for an unknown tool name");
+        assertEquals(2, prompts.size(), "the loop must keep going after a missed tool name");
+        String secondPrompt = prompts.get(1);
+        assertTrue(secondPrompt.contains("tool 'read' not found"),
+                () -> "the scratchpad omits the not-found observation: " + secondPrompt);
+        assertTrue(secondPrompt.contains("spring_ai_mcp_client_files_read"),
+                () -> "the observation must list the real MCP tool names: " + secondPrompt);
     }
 }
