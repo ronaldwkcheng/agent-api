@@ -155,11 +155,70 @@ Output: a structured research report. **Up to 8 LLM calls** (1 plan + up to 6 st
 
 The agent reasons about what to do, calls a tool, observes the result, and repeats until it can
 answer — up to 8 steps. Three tools are registered from `@Tool`-annotated methods on
-`ReActWorkflowExample`: `wordCount`, `unitConverter`, and `currentDate`.
+`ReActWorkflowExample`: `wordCount`, `unitConverter`, and `currentDate` — plus any MCP server
+tools, if the client is enabled (see [below](#connecting-mcp-tool-servers)).
 
-The question deliberately requires all three: counting the words in a Gettysburg Address excerpt,
-converting 37 °C to Fahrenheit, and reporting today's date. Watch the scratchpad build up across
-iterations at `DEBUG`. **Up to 8 LLM calls**, plus local (free) tool invocations.
+The question depends on which tools are available, and the runner picks it accordingly:
+
+* **MCP client off** (the default) — the question requires all three local tools: counting the
+  words in a Gettysburg Address excerpt, converting 37 °C to Fahrenheit, and reporting today's
+  date.
+* **MCP client on** — the agent is asked to read `build.gradle.kts` in the working directory and
+  list the Spring AI starters it declares, then report the date. The file read has to go through
+  an MCP tool, so the trace shows one action of each kind.
+
+The fallback matters: a question only an MCP tool can answer has no path to an answer without
+one, and the loop would spend its whole 8-step budget discovering that.
+
+Watch the scratchpad build up across iterations at `DEBUG`. **Up to 8 LLM calls**, plus local
+(free) tool invocations.
+
+---
+
+## Connecting MCP tool servers
+
+`:example` carries `spring-ai-starter-mcp-client`, which autoconfigures one
+`ToolCallbackProvider` bean covering the tools of every configured MCP server. That bean is what
+`ReActWorkflow.Builder.toolCallbackProvider(...)` takes, so MCP tools join the reasoning loop
+beside local `@Tool` methods:
+
+```java
+ReActWorkflow.builder()
+        .chatClient(chatClient)
+        .tools(this)                     // local @Tool methods
+        .toolCallbackProvider(mcpTools)  // every tool of every configured server
+        .maxSteps(8)
+        .build();
+```
+
+**Inject that bean as an `ObjectProvider`.** With the client disabled the bean does not exist, so
+a direct `ToolCallbackProvider` dependency fails context startup rather than degrading to the
+local tools. `ReActWorkflowExample` does this — it registers whatever MCP tools are present, logs
+their names at `INFO`, and reasons over just its own three `@Tool` methods when there are none:
+
+```
+mcp_tools_registered count=14 names=[read_file, read_multiple_files, write_file, ...]
+```
+
+Servers are declared in
+[`application.properties`](example/src/main/resources/application.properties) — a filesystem
+server over stdio is configured there, with streamable-HTTP and SSE examples commented out
+alongside it.
+
+**The client is off by default.** Enabling it connects to every configured server as the context
+starts — a stdio server is spawned as a child process — so leaving it on would make
+`./gradlew build` depend on `npx` and the network. Turn it on per run:
+
+```bash
+./gradlew bootRun --args='--agent.demo=react --spring.ai.mcp.client.enabled=true'
+```
+
+Two things to weigh before pointing this at a real server. Every tool's name, description and
+full JSON input schema is rendered into *every* reasoning prompt, so a server exposing dozens of
+tools is expensive at 8 steps — register a filtered subset with `toolCallbacks(ToolCallback...)`
+instead. And tool output re-enters the next prompt through the scratchpad, which makes a
+third-party server a prompt-injection surface that local methods are not. The
+[ReAct guide](api/docs/react-workflow.md) covers both.
 
 ---
 
@@ -185,7 +244,8 @@ Execution failed for task ':example:test'.
 ```
 
 Tests use stub `SubAgent`s rather than a real `ChatClient`, and `AgentApiApplicationTests`
-overrides the API key with a placeholder — so the build never contacts a model provider.
+overrides the API key with a placeholder and pins the MCP client off — so the build never
+contacts a model provider and starts no MCP server.
 
 ## Reference documentation
 

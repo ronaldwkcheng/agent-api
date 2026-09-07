@@ -17,8 +17,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * runner registered unconditionally would issue real, billable requests on every build.
  * The runners are gated behind the {@code agent.demo} property, which is deliberately unset
  * here.</p>
+ *
+ * <p>The MCP client is pinned off for the same reason. It defaults to off in
+ * {@code application.properties} already, but enabling it starts every configured server —
+ * spawning a child process for a stdio one — so the test states the requirement rather than
+ * inheriting it.</p>
  */
-@SpringBootTest(properties = "spring.ai.openai.api-key=test-key-never-used")
+@SpringBootTest(properties = {
+        "spring.ai.openai.api-key=test-key-never-used",
+        "spring.ai.mcp.client.enabled=false"
+})
 class AgentApiApplicationTests {
 
     @Autowired

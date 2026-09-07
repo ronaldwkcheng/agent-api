@@ -37,6 +37,13 @@ dependencies {
     // lands here.
     implementation("org.springframework.ai:spring-ai-starter-model-openai")
 
+    // MCP tool servers. Autoconfigures the McpSyncClients and the ToolCallbackProvider bean that
+    // ReActWorkflow.Builder.toolCallbackProvider(...) consumes; the servers themselves are
+    // declared in application.properties and are disabled by default. This is the plain
+    // HttpClient-based starter — the -webflux variant would drag a reactive stack into a
+    // deliberately non-web app.
+    implementation("org.springframework.ai:spring-ai-starter-mcp-client")
+
     compileOnly("org.projectlombok:lombok")
     annotationProcessor("org.projectlombok:lombok")
     testImplementation("org.springframework.boot:spring-boot-starter-test")

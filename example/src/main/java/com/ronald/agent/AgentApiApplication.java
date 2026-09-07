@@ -123,7 +123,19 @@ public class AgentApiApplication {
     CommandLineRunner reactRunner(ReActWorkflowExample service) {
         return args -> {
             System.out.println("\n=== ReActWorkflowExample result ===");
-            String question = "How many words are in 'Four score and seven years ago our fathers brought forth on this continent a new nation'? Also convert 37 degrees Celsius to Fahrenheit, and tell me today's date.";
+
+            // With MCP servers attached, ask something no local tool can answer, so the trace
+            // shows an MCP action and a local one. Without them that question has no path to an
+            // answer and the loop would burn all 8 steps discovering it, so fall back to the
+            // question the three @Tool methods cover between them.
+            String question = service.hasMcpTools()
+                    ? "Read the file build.gradle.kts in the current directory and list which "
+                            + "Spring AI starter dependencies this module declares. Also tell me "
+                            + "today's date, so I know when I checked."
+                    : "How many words are in 'Four score and seven years ago our fathers brought "
+                            + "forth on this continent a new nation'? Also convert 37 degrees "
+                            + "Celsius to Fahrenheit, and tell me today's date.";
+
             String result = service.answer(question);
             System.out.println(result);
         };
