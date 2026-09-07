@@ -63,6 +63,8 @@ classDiagram
     class Builder {
         +chatClient(ChatClient) Builder
         +tools(Object...) Builder
+        +toolCallbacks(ToolCallback...) Builder
+        +toolCallbackProvider(ToolCallbackProvider) Builder
         +maxSteps(int) Builder
         +reactPromptTemplate(String) Builder
         +exhaustionPolicy(ExhaustionPolicy) Builder
@@ -75,6 +77,7 @@ classDiagram
     ReActWorkflow o-- "n" ToolCallback
     ReActThinkerAgent ..> ReActThought
     Builder ..> MethodToolCallbackProvider : extracts @Tool methods
+    Builder ..> ToolCallbackProvider : takes callbacks as-is (MCP)
 ```
 
 ### Execution
@@ -141,7 +144,7 @@ One LLM call per step, plus local tool calls, which are usually free. `maxSteps(
 | Key | Value | Constant |
 |---|---|---|
 | `input` | The user's question. Fixed. | `CTX_INPUT` |
-| `tools` | Every registered tool as `- name: description (input schema: {…})`, generated from the `@Tool` annotations. Fixed. | `CTX_TOOLS` |
+| `tools` | Every registered tool as `- name: description (input schema: {…})`, read off each tool's `ToolDefinition`. Fixed. | `CTX_TOOLS` |
 | `scratchpad` | The growing trace. Empty on step 1. | `CTX_SCRATCHPAD` |
 
 Scratchpad entries are appended in this shape:
@@ -161,7 +164,8 @@ Observation: 17 words, 96 characters
 `ReActWorkflow` **calls tools itself.** It does not hand them to the `ChatClient`, so Spring AI's
 native tool-calling never runs. The workflow:
 
-1. extracts `ToolCallback`s from your `@Tool`-annotated methods via `MethodToolCallbackProvider`;
+1. collects `ToolCallback`s — extracted from your `@Tool`-annotated methods via
+   `MethodToolCallbackProvider`, or taken as-is from `toolCallbacks(...)`;
 2. renders their names, descriptions and JSON input schemas into `{tools}` in the prompt;
 3. asks the model, as **typed output**, for a `ReActThought` naming a tool and an `actionInput`;
 4. invokes `toolCallback.call(actionInputAsJson)` and appends the returned string.
@@ -169,6 +173,14 @@ native tool-calling never runs. The workflow:
 The consequence: the model never sees a tool-use API, only a text description of what's
 available, and the loop is fully visible and debuggable at `DEBUG`. If you want the provider's
 own tool-calling instead, use a plain `ChatClient` with `.tools(...)` — not this workflow.
+
+`ToolCallback` is the only thing steps 2 and 4 need, which is what makes **MCP tools** work here
+unchanged: the `spring-ai-starter-mcp-client` autoconfiguration contributes a
+`ToolCallbackProvider` covering every configured server, and `toolCallbackProvider(...)` puts its
+tools in the loop beside any local ones. Two consequences worth planning for — a server exposing
+dozens of tools inflates `{tools}` in *every* prompt of every step, and a transport failure
+throws out of `invoke` rather than becoming an observation (see [Gotchas](#gotchas)), so filter
+and wrap third-party callbacks before registering them.
 
 `actionInput` is typed `JsonNode` rather than `Map` or `String` on purpose: Jackson can
 deserialize both an object and an explicit `null` into it without erroring, and the model is
@@ -234,6 +246,31 @@ String answer = workflow.invoke(question);
 `tools(Object...)` takes several sources; callbacks are keyed by tool name, so a later
 registration with the same name replaces the earlier one.
 
+Tools that are not local annotated methods are registered as `ToolCallback`s instead. Both
+routes fill the same map and may be combined:
+
+```java
+ReActWorkflow workflow = ReActWorkflow.builder()
+        .chatClient(chatClient)
+        .tools(this)                     // local @Tool methods
+        .toolCallbackProvider(mcpTools)  // every tool of every configured MCP server
+        .maxSteps(8)
+        .build();
+```
+
+`mcpTools` here is the autoconfigured `ToolCallbackProvider` bean; inject it after adding
+`org.springframework.ai:spring-ai-starter-mcp-client` to the **application** module and declaring
+the servers in `application.properties`. Provider dependencies stay out of `:api`, which needs
+nothing new — `ToolCallback` already arrives with `spring-ai-client-chat`.
+
+Inject it as an `ObjectProvider<ToolCallbackProvider>` if the MCP client can be switched off: with
+`spring.ai.mcp.client.enabled=false` the bean is absent altogether, so a direct dependency fails
+context startup instead of falling back to the local tools. `ReActWorkflowExample` shows the
+pattern.
+
+To register a subset, or callbacks wrapped to truncate or guard their output, use
+`toolCallbacks(ToolCallback...)` and pass only what you want the model to see.
+
 Working end-to-end version:
 [`ReActWorkflowExample`](../../example/src/main/java/com/ronald/agent/example/ReActWorkflowExample.java).
 
@@ -273,7 +310,9 @@ branches on `finalAnswer` and reads `answer`, `toolName`, and `actionInput` exac
 | Method | Default | Notes |
 |---|---|---|
 | `chatClient(ChatClient)` | — | Required. Every reasoning step uses it. |
-| `tools(Object...)` | — | At least one `@Tool` method required. |
+| `tools(Object...)` | — | Objects with `@Tool` methods. |
+| `toolCallbacks(ToolCallback...)` | — | Ready-made callbacks. Rejects a null array or element. |
+| `toolCallbackProvider(ToolCallbackProvider)` | — | Everything the provider exposes — the MCP entry point. |
 | `maxSteps(int)` | `10` | Must be ≥ 1. One LLM call per step. |
 | `reactPromptTemplate(String)` | built-in | Should contain `{input}`, `{tools}`, `{scratchpad}`. |
 | `exhaustionPolicy(ExhaustionPolicy)` | `THROW` | |
@@ -283,7 +322,7 @@ branches on `finalAnswer` and reads `answer`, `toolName`, and `actionInput` exac
 | Check | Exception |
 |---|---|
 | No `chatClient` | `NullPointerException` |
-| No tools registered | `IllegalArgumentException` — "At least one @Tool-annotated method must be registered" |
+| No tools registered | `IllegalArgumentException` — "At least one tool must be registered, via tools(Object...) or toolCallbacks(ToolCallback...)" |
 | `maxSteps < 1` | `IllegalArgumentException` |
 
 ---
@@ -322,6 +361,14 @@ policy is to fail loudly rather than return whatever it was mumbling.
 
 **Tool exceptions are not contained.** Unlike the unknown-tool path, a tool that throws kills the
 run. Catch inside the tool method and return the error as text if you want the model to recover.
+
+**Callbacks you did not write need a wrapper.** For MCP tools the three rules above are advice you
+cannot enforce: the description is whatever the server publishes, output length is whatever it
+returns, and a timeout or dropped transport surfaces as a thrown exception rather than an
+observation. A decorating `ToolCallback` that catches, truncates, and registers via
+`toolCallbacks(...)` is the place to impose them. Remember too that tool output re-enters the next
+prompt as part of the scratchpad, so a third-party server is a prompt-injection surface that local
+methods are not.
 
 **No conversation memory across steps.** State lives entirely in the rendered scratchpad — each
 call is stateless from the provider's side. Anything the model needs to remember must appear in a

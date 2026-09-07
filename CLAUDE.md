@@ -35,8 +35,10 @@ Two Gradle subprojects:
 `:api` is a plain library — no Spring Boot plugin, so no `bootJar` and no `bootRun`. It declares
 `api("org.springframework.ai:spring-ai-client-chat")` because its public signatures expose Spring
 AI types, and it deliberately names **no model provider**: choosing one is the application's job.
-`:example` adds `spring-ai-starter-model-openai` for the OpenAI autoconfiguration. Keep it that
-way — provider dependencies do not belong in `:api`.
+`:example` adds `spring-ai-starter-model-openai` for the OpenAI autoconfiguration, and
+`spring-ai-starter-mcp-client` for MCP tool servers. Keep it that way — provider and transport
+dependencies do not belong in `:api`, which needs only the `ToolCallback` and
+`ToolCallbackProvider` interfaces that arrive with `spring-ai-client-chat`.
 
 Plugin and BOM versions live in `gradle.properties` (`springBootVersion`, `springAiVersion`) and
 are wired into the plugin ids through `pluginManagement` in `settings.gradle.kts`, so no version
@@ -63,6 +65,13 @@ registered, which is what keeps `./gradlew build` free and offline — `@SpringB
 Tests must never require an API key or reach the network. `AgentApiApplicationTests` (in
 `:example`) overrides the key with a placeholder, and the `:api` workflow tests use stub
 `SubAgent`s rather than a `ChatClient`.
+
+`spring.ai.mcp.client.enabled=false` in `application.properties` is load-bearing for the same
+reason. Enabling the MCP client connects to every server configured there as the context starts —
+spawning a child process for a stdio server — so a plain boot and every `@SpringBootTest` would
+otherwise depend on `npx` and the network. Enable it per run
+(`--spring.ai.mcp.client.enabled=true`), never by changing the default. `AgentApiApplicationTests`
+also pins it off explicitly.
 
 ## Architecture
 

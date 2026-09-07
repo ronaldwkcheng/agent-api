@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.ToolCallbackProvider;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.method.MethodToolCallbackProvider;
 
@@ -24,9 +25,12 @@ import java.util.stream.Collectors;
  * <p>The loop repeats until the agent signals {@code finalAnswer = true} in a
  * {@link ReActThought} or {@link Builder#maxSteps maxSteps} is exhausted.</p>
  *
- * <p>Tools are registered via objects whose methods are annotated with Spring AI's
- * {@code @Tool} annotation. The workflow extracts tool definitions (name, description,
- * and input schema) from those annotations and exposes them to the LLM at reasoning time.</p>
+ * <p>Tools are registered either as objects whose methods carry Spring AI's {@code @Tool}
+ * annotation ({@link Builder#tools(Object...)}), or as ready-made {@link ToolCallback}s —
+ * MCP server tools, for instance ({@link Builder#toolCallbacks(ToolCallback...)} and
+ * {@link Builder#toolCallbackProvider(ToolCallbackProvider)}). Either way the workflow reads
+ * each tool's definition (name, description, and input schema) and exposes it to the LLM at
+ * reasoning time.</p>
  *
  * <p>Context keys used internally:</p>
  * <ul>
@@ -39,7 +43,8 @@ import java.util.stream.Collectors;
  * <pre>{@code
  * AgenticWorkflow<String> workflow = ReActWorkflow.builder()
  *     .chatClient(chatClient)
- *     .tools(myToolsObject)   // any object with @Tool-annotated methods
+ *     .tools(myToolsObject)            // any object with @Tool-annotated methods
+ *     .toolCallbackProvider(mcpTools)  // and/or every tool from the configured MCP servers
  *     .maxSteps(10)
  *     .build();
  * String answer = workflow.invoke("How many days until New Year's Eve?");
@@ -283,14 +288,53 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
          * @return this builder
          */
         public Builder tools(Object... toolSources) {
-            ToolCallback[] callbacks = MethodToolCallbackProvider.builder()
+            return toolCallbacks(MethodToolCallbackProvider.builder()
                     .toolObjects(toolSources)
                     .build()
-                    .getToolCallbacks();
+                    .getToolCallbacks());
+        }
+
+        /**
+         * Registers already-built {@link ToolCallback}s, for tools that do not originate from
+         * local {@code @Tool}-annotated methods — MCP server tools obtained from a
+         * {@link ToolCallbackProvider}, for instance, or callbacks wrapped to truncate their output.
+         *
+         * <p>Callbacks are keyed by {@link ToolDefinition#name()}, so registering a callback
+         * whose name matches one already present replaces it. May be combined freely with
+         * {@link #tools(Object...)}.</p>
+         *
+         * @param callbacks the tool callbacks to register
+         * @return this builder
+         * @throws NullPointerException if {@code callbacks} or any element is null
+         */
+        public Builder toolCallbacks(ToolCallback... callbacks) {
+            Objects.requireNonNull(callbacks, "callbacks must not be null");
             for (ToolCallback callback : callbacks) {
+                Objects.requireNonNull(callback, "callbacks must not contain null");
                 this.tools.put(callback.getToolDefinition().name(), callback);
             }
             return this;
+        }
+
+        /**
+         * Registers every {@link ToolCallback} exposed by the given provider.
+         *
+         * <p>This is the entry point for MCP tools: the {@code spring-ai-starter-mcp-client}
+         * autoconfiguration contributes a {@code ToolCallbackProvider} bean covering the tools
+         * of all configured MCP servers, and passing it here puts them in the ReAct loop
+         * alongside any local {@code @Tool} methods.</p>
+         *
+         * <p>Note that the workflow renders each tool's name, description and full JSON input
+         * schema into every reasoning prompt, so a provider exposing a large number of tools is
+         * worth filtering through {@link #toolCallbacks(ToolCallback...)} instead.</p>
+         *
+         * @param provider the provider whose callbacks to register
+         * @return this builder
+         * @throws NullPointerException if {@code provider} is null
+         */
+        public Builder toolCallbackProvider(ToolCallbackProvider provider) {
+            Objects.requireNonNull(provider, "provider must not be null");
+            return toolCallbacks(provider.getToolCallbacks());
         }
 
         /**
@@ -328,7 +372,8 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
         public ReActWorkflow build() {
             Objects.requireNonNull(chatClient, "chatClient must not be null");
             if (tools.isEmpty()) {
-                throw new IllegalArgumentException("At least one @Tool-annotated method must be registered");
+                throw new IllegalArgumentException("At least one tool must be registered, via tools(Object...) "
+                        + "or toolCallbacks(ToolCallback...)");
             }
             if (maxSteps < 1) {
                 throw new IllegalArgumentException("maxSteps must be at least 1");
