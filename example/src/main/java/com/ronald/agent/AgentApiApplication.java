@@ -194,7 +194,7 @@ public class AgentApiApplication {
             System.out.println("Retrieving from '" + service.collectionName() + "' ("
                     + documentCount + " documents) with " + service.searchBounds() + "\n");
 
-            String question = "Create an MCQ quiz from the financial statements";
+            String question = "Summarize the documents";
             System.out.println("Question: " + question);
             System.out.println("Retrieved:");
             System.out.println(service.explainRetrieval(question));
