@@ -1,11 +1,14 @@
 package com.ronald.agent;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chroma.vectorstore.ChromaApi;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.ApplicationContext;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -22,6 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code application.properties} already, but enabling it starts every configured server —
  * spawning a child process for a stdio one — so the test states the requirement rather than
  * inheriting it.</p>
+ *
+ * <p>Chroma needs no such flag: {@code ChromaConfiguration} is gated on {@code agent.demo=rag},
+ * so with that property unset there is no {@code ChromaVectorStore} bean to connect with. That
+ * gate is what {@link #noVectorStoreIsRegisteredWithoutTheDemoProperty()} guards.</p>
  */
 @SpringBootTest(properties = {
         "spring.ai.openai.api-key=test-key-never-used",
@@ -34,6 +41,17 @@ class AgentApiApplicationTests {
 
     @Test
     void contextLoads() {
+    }
+
+    @Test
+    void noVectorStoreIsRegisteredWithoutTheDemoProperty() {
+        // A ChromaVectorStore bean is an InitializingBean that connects to Chroma and creates its
+        // collection during startup, so one existing here would make every build depend on a
+        // Chroma running on localhost:8000.
+        assertEquals(0, context.getBeanNamesForType(VectorStore.class).length,
+                "no VectorStore may be registered without agent.demo=rag");
+        assertEquals(0, context.getBeanNamesForType(ChromaApi.class).length,
+                "no ChromaApi may be registered without agent.demo=rag");
     }
 
     @Test

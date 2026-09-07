@@ -23,8 +23,12 @@ import java.util.concurrent.Executors;
  * }</pre>
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
- * {@code iterative}, {@code plan-and-execute}, {@code react}. Values are matched exactly,
- * so relaxed binding does not apply — spell them as written.</p>
+ * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code rag}. Values are matched
+ * exactly, so relaxed binding does not apply — spell them as written.</p>
+ *
+ * <p>{@code rag} is the one demo with a prerequisite beyond the API key: it needs a Chroma running
+ * on the URL in {@code application.properties}, already populated by the ingestion app at
+ * {@code E:\dev\spring_ai_workspace\chroma-doc}. See {@link ChromaConfiguration}.</p>
  */
 @SpringBootApplication
 public class AgentApiApplication {
@@ -138,6 +142,39 @@ public class AgentApiApplication {
 
             String result = service.answer(question);
             System.out.println(result);
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "rag")
+    CommandLineRunner ragRunner(RagSubAgentExample service) {
+        return args -> {
+            System.out.println("\n=== RagSubAgentExample result ===");
+
+            // This demo retrieves but never ingests, so an empty collection has no path to an
+            // answer — every question would come back with the agent's no-documents reply after
+            // paying to embed the query. Say so instead.
+            long documentCount = service.documentCount();
+            if (documentCount == 0) {
+                System.out.println("Chroma collection '" + service.collectionName()
+                        + "' holds no documents, so there is nothing to retrieve.\n"
+                        + "\nIngestion lives in the companion project, not here:\n"
+                        + "  1. cd E:\\dev\\spring_ai_workspace\\chroma-doc\n"
+                        + "  2. docker compose up -d          (Chroma on localhost:8000)\n"
+                        + "  3. ./gradlew bootRun             (ingestion app on localhost:8080)\n"
+                        + "  4. curl -X POST \"http://localhost:8080/api/ingestion?path=<your-docs>\"\n"
+                        + "\nThen run this demo again.");
+                return;
+            }
+            System.out.println("Retrieving from '" + service.collectionName() + "' ("
+                    + documentCount + " documents)\n");
+
+            String question = "Create an MCQ quiz from the financial statements";
+            System.out.println("Question: " + question);
+            System.out.println("Retrieved:");
+            System.out.println(service.explainRetrieval(question));
+            System.out.println("\nAnswer:");
+            System.out.println(service.answer(question));
         };
     }
 }

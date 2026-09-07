@@ -33,12 +33,24 @@ Two Gradle subprojects:
 | `:example` | `AgentApiApplication` + `example` package + `application.properties` | `org.springframework.boot` |
 
 `:api` is a plain library — no Spring Boot plugin, so no `bootJar` and no `bootRun`. It declares
-`api("org.springframework.ai:spring-ai-client-chat")` because its public signatures expose Spring
-AI types, and it deliberately names **no model provider**: choosing one is the application's job.
-`:example` adds `spring-ai-starter-model-openai` for the OpenAI autoconfiguration, and
-`spring-ai-starter-mcp-client` for MCP tool servers. Keep it that way — provider and transport
-dependencies do not belong in `:api`, which needs only the `ToolCallback` and
-`ToolCallbackProvider` interfaces that arrive with `spring-ai-client-chat`.
+`api("org.springframework.ai:spring-ai-client-chat")` and
+`api("org.springframework.ai:spring-ai-vector-store")` because its public signatures expose
+Spring AI types, and it deliberately names **no model provider and no vector store**: choosing
+those is the application's job. Both are interface modules — `ChatClient`/`ToolCallback` from the
+first, `VectorStore`/`SearchRequest` from the second.
+`:example` adds `spring-ai-starter-model-openai` for the OpenAI autoconfiguration,
+`spring-ai-starter-mcp-client` for MCP tool servers, and `spring-ai-chroma-store` for the RAG
+demo's vector store. Keep it that way — provider, store and transport dependencies do not belong
+in `:api`.
+
+The Chroma dependency is deliberately the plain `spring-ai-chroma-store` and **not**
+`spring-ai-starter-vector-store-chroma`. The starter's autoconfiguration builds a
+`ChromaVectorStore` eagerly; that bean is an `InitializingBean` which connects to Chroma and
+creates its collection as the context starts, so `./gradlew build` and every `@SpringBootTest`
+would need a Chroma on `localhost:8000`. `ChromaConfiguration` in `:example` wires the same beans
+behind `@ConditionalOnProperty(name = "agent.demo", havingValue = "rag")` instead, which is
+enforced by `AgentApiApplicationTests.noVectorStoreIsRegisteredWithoutTheDemoProperty`. Do not
+swap in the starter, and do not remove that condition.
 
 Plugin and BOM versions live in `gradle.properties` (`springBootVersion`, `springAiVersion`) and
 are wired into the plugin ids through `pluginManagement` in `settings.gradle.kts`, so no version
@@ -58,7 +70,7 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, or `react`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `react`, or `rag`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -98,6 +110,12 @@ This project implements six **agentic workflow patterns** built on top of Spring
 | Plan & Execute | `PlanAndExecuteWorkflow<T>` | Planner decomposes input into steps; executor runs each step sequentially with accumulated context; synthesizer produces final typed output |
 | ReAct | `ReActWorkflow` | Thought → Action → Observation loop; tools are registered with Spring AI's `@Tool` annotation |
 
+Alongside them, one retrieval agent:
+
+| Pattern | Class | Description |
+|---|---|---|
+| RAG | `RagSubAgent` | Semantic-searches a `VectorStore`, renders the passages into the prompt, returns the grounded answer. Implements **both** `SubAgent<String>` and `AgenticWorkflow<String>`, so it works standalone via `invoke` and as a step inside any of the six. Empty retrieval short-circuits to `noDocumentsAnswer` without an LLM call. |
+
 ### Agent Implementation Layer
 
 - **`AbstractPromptSubAgent<T>`** — base class handling ChatClient invocation and prompt template rendering. Subclass and implement to define custom agent behavior.
@@ -113,6 +131,7 @@ Workflows pass state through a `Map<String, String>`. Key names are workflow-spe
 - `"plan"` — serialized step list (PlanAndExecuteWorkflow)
 - `"scratchpad"` — accumulated thought/action/observation history (ReActWorkflow)
 - `"criteria"`, `"content"`, `"feedback"` — refinement loop state (IterativeRefinementWorkflow)
+- `"documents"` — formatted retrieved passages, written by `RagSubAgent` before its prompt renders
 - Custom agent output keys are set via `getOutputKey()` on each `SubAgent`
 
 ### Example Usages
