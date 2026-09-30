@@ -21,6 +21,7 @@ classDiagram
     class AgenticWorkflow~T~ {
         <<interface>>
         +invoke(String) T
+        +invoke(String, Map) T
     }
 
     class ParallelAgentOrchestrator~T~ {
@@ -31,7 +32,7 @@ classDiagram
         -Duration branchTimeout
         -BranchFailurePolicy failurePolicy
         +builder()$ Builder~T~
-        +invoke(String) T
+        +invoke(String, Map) T
         -executeBranch(SubAgent, Map) BranchResult
         -withTimeout(CompletableFuture) CompletableFuture
         -recoverBranch(SubAgent, Throwable) BranchResult

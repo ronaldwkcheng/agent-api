@@ -22,12 +22,13 @@ classDiagram
     class AgenticWorkflow~T~ {
         <<interface>>
         +invoke(String) T
+        +invoke(String, Map) T
     }
 
     class SequentialAgentChain~T~ {
         -List~SubAgent~ agents
         +builder()$ Builder~T~
-        +invoke(String) T
+        +invoke(String, Map) T
         -updateContext(Map, SubAgent, String)
     }
 

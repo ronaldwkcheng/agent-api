@@ -24,6 +24,7 @@ classDiagram
     class AgenticWorkflow~String~ {
         <<interface>>
         +invoke(String) String
+        +invoke(String, Map) String
     }
 
     class ReActWorkflow {
@@ -35,7 +36,7 @@ classDiagram
         -int maxSteps
         -ExhaustionPolicy exhaustionPolicy
         +builder()$ Builder
-        +invoke(String) String
+        +invoke(String, Map) String
         -buildToolsDescription() String
     }
 

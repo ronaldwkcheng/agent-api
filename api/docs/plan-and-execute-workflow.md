@@ -26,6 +26,7 @@ classDiagram
     class AgenticWorkflow~T~ {
         <<interface>>
         +invoke(String) T
+        +invoke(String, Map) T
     }
 
     class PlanAndExecuteWorkflow~T~ {
@@ -41,7 +42,7 @@ classDiagram
         -int maxSteps
         -ExhaustionPolicy exhaustionPolicy
         +builder()$ Builder~T~
-        +invoke(String) T
+        +invoke(String, Map) T
         -formatPlan(List~Step~) String
     }
 

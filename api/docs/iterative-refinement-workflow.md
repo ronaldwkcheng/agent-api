@@ -23,6 +23,7 @@ classDiagram
     class AgenticWorkflow~String~ {
         <<interface>>
         +invoke(String) String
+        +invoke(String, Map) String
     }
 
     class IterativeRefinementWorkflow {
@@ -37,7 +38,7 @@ classDiagram
         -int maxAttempts
         -ExhaustionPolicy exhaustionPolicy
         +builder()$ Builder
-        +invoke(String) String
+        +invoke(String, Map) String
     }
 
     class EvaluatorAgent {
