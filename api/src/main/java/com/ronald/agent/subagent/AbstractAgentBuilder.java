@@ -72,7 +72,7 @@ public abstract class AbstractAgentBuilder<B extends AbstractAgentBuilder<B, A>,
      * <pre>{@code
      * .advisors((advisorSpec, context) ->
      *         advisorSpec.param(ChatMemory.CONVERSATION_ID,
-     *                           context.get("conversationId")))
+     *                           context.get(SubAgent.CONVERSATION_ID)))
      * }</pre>
      *
      * <p>The advisor itself is registered on the {@code ChatClient} (typically through

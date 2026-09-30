@@ -86,6 +86,37 @@ class ParallelAgentOrchestratorBuilderTest {
     }
 
     @Test
+    void rejectsOutputKeyCollidingWithConversationId() {
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> builderWith("safety", SubAgent.CONVERSATION_ID).build());
+
+        assertTrue(ex.getMessage().contains("reserved output key 'conversationId'"), ex.getMessage());
+    }
+
+    /**
+     * Unlike 'reports', this reservation cannot be lifted by renaming: the conversation
+     * identity has a fixed key, so a branch can never publish under it.
+     */
+    @Test
+    void rejectsConversationIdEvenWhenReportsKeyIsRenamed() {
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> builderWith("safety", SubAgent.CONVERSATION_ID).reportsKey("digest").build());
+
+        assertTrue(ex.getMessage().contains("reserved output key 'conversationId'"), ex.getMessage());
+    }
+
+    /** The reports key lands in the same aggregator context, so it cannot squat the identity either. */
+    @Test
+    void rejectsReportsKeyCollidingWithConversationId() {
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> builderWith("sentiment", "safety")
+                        .reportsKey(SubAgent.CONVERSATION_ID)
+                        .build());
+
+        assertTrue(ex.getMessage().contains("reportsKey must not be 'conversationId'"), ex.getMessage());
+    }
+
+    @Test
     void rejectsNullOutputKey() {
         IllegalStateException ex = assertThrows(IllegalStateException.class,
                 () -> builderWith("safety", null).build());

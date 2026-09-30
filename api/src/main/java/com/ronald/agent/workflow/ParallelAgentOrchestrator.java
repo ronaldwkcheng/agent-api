@@ -290,6 +290,10 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
          * Sets the key under which the aggregated reports from sub-agents will be stored in the context.
          * Defaults to "reports" if not set.
          *
+         * <p>Must not be {@link SubAgent#CONVERSATION_ID}; that collision is rejected by
+         * {@link #build()} rather than here, since the key is validated together with the
+         * sub-agent output keys it has to stay distinct from.</p>
+         *
          * @param reportsKey the key for reports in the aggregator context
          * @return this Builder
          * @throws NullPointerException if reportsKey is null
@@ -362,10 +366,24 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
          * context. Without this check a colliding key would silently overwrite another branch's
          * result during fan-in, discarding completed work with no error.
          *
+         * <p>{@link SubAgent#CONVERSATION_ID} is reserved for the same reason, with a sharper
+         * consequence: it identifies whose conversation this is. A branch publishing under that
+         * key would replace the caller's identity with its own model output partway through
+         * fan-out, and the aggregator would then be answered against a different conversation's
+         * memory &mdash; a silent cross-contamination rather than a lost result.</p>
+         *
          * @throws IllegalStateException if an output key is null, blank, duplicated, or collides
-         *                               with a reserved context key
+         *                               with a reserved context key, or if {@code reportsKey}
+         *                               is itself a reserved key
          */
         private void validateOutputKeys() {
+            if (SubAgent.CONVERSATION_ID.equals(reportsKey)) {
+                throw new IllegalStateException(
+                        "reportsKey must not be '" + SubAgent.CONVERSATION_ID
+                                + "'. That key carries the conversation identity through the"
+                                + " aggregator context and would be overwritten by the reports.");
+            }
+
             Set<String> seen = new HashSet<>();
             for (SubAgent<String> agent : subAgents) {
                 String key = agent.getOutputKey();
@@ -375,10 +393,13 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
                     throw new IllegalStateException(
                             "SubAgent " + agentName + " must return a non-blank getOutputKey().");
                 }
-                if (CTX_INPUT.equals(key) || reportsKey.equals(key)) {
+                if (CTX_INPUT.equals(key)
+                        || reportsKey.equals(key)
+                        || SubAgent.CONVERSATION_ID.equals(key)) {
                     throw new IllegalStateException(
                             "SubAgent " + agentName + " uses reserved output key '" + key
-                                    + "'. Reserved keys are '" + CTX_INPUT + "' and '" + reportsKey + "'.");
+                                    + "'. Reserved keys are '" + CTX_INPUT + "', '" + reportsKey
+                                    + "' and '" + SubAgent.CONVERSATION_ID + "'.");
                 }
                 if (!seen.add(key)) {
                     throw new IllegalStateException(
