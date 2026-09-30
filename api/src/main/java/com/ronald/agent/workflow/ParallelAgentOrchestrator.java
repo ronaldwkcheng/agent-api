@@ -99,19 +99,24 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
      *                               fails or exceeds the branch timeout
      */
     @Override
-    public T invoke(String input) {
+    public T invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(attributes, "attributes must not be null");
         log.info("fan_out_start subAgents={} inputLength={} timeout={} policy={}",
                 subAgents.size(), input.length(), branchTimeout, failurePolicy);
 
-        Map<String, String> fanOutContext = Map.of(CTX_INPUT, input);
+        // Seeded from the caller's attributes, then the input. Every branch reads the same
+        // immutable snapshot concurrently, so it is copied once here rather than per branch.
+        Map<String, String> fanOutContext = new HashMap<>(attributes);
+        fanOutContext.put(CTX_INPUT, input);
+        Map<String, String> immutableFanOutContext = Collections.unmodifiableMap(fanOutContext);
 
         // ── Fan-out ──────────────────────────────────────────────────────────
         // Each branch is independently bounded and independently recovered, so one slow or
         // failing agent cannot hang the workflow or discard its siblings' completed work.
         List<CompletableFuture<BranchResult>> futures = subAgents.stream()
                 .map(agent -> withTimeout(
-                        CompletableFuture.supplyAsync(() -> executeBranch(agent, fanOutContext), executor))
+                        CompletableFuture.supplyAsync(() -> executeBranch(agent, immutableFanOutContext), executor))
                         .handle((result, error) -> error == null ? result : recoverBranch(agent, error)))
                 .toList();
 
@@ -120,7 +125,9 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
         log.info("fan_out_complete subAgents={}", subAgents.size());
 
         // ── Fan-in: build aggregator context ─────────────────────────────────
-        Map<String, String> aggregatorContext = new HashMap<>();
+        // Seeded from the caller's attributes too: the aggregator is a request like any other,
+        // and its advisor customizer needs the same conversation identity the branches had.
+        Map<String, String> aggregatorContext = new HashMap<>(attributes);
         aggregatorContext.put(CTX_INPUT, input);
 
         StringJoiner reportsJoiner = new StringJoiner("\n");

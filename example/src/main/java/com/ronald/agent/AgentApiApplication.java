@@ -2,11 +2,15 @@ package com.ronald.agent;
 
 import com.ronald.agent.example.*;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -23,7 +27,8 @@ import java.util.concurrent.Executors;
  * }</pre>
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
- * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code rag}. Values are matched
+ * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code rag},
+ * {@code memory}. Values are matched
  * exactly, so relaxed binding does not apply — spell them as written.</p>
  *
  * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
@@ -49,8 +54,41 @@ public class AgentApiApplication {
     }
 
     @Bean
+    @Primary
     public ChatClient chatClient(ChatClient.Builder builder) {
         return builder.build();
+    }
+
+    /**
+     * Holds the conversation history for the memory demo.
+     *
+     * <p>{@code MessageWindowChatMemory} keeps the last N messages per conversation in heap,
+     * which is the right default for a demo: it needs no infrastructure and forgets on restart.
+     * A real deployment swaps the repository for a JDBC or Cassandra one &mdash; that choice
+     * belongs here in {@code example}, never in {@code api}, exactly as the model provider and
+     * the vector store do.</p>
+     */
+    @Bean
+    public ChatMemory chatMemory() {
+        return MessageWindowChatMemory.builder().build();
+    }
+
+    /**
+     * A ChatClient with chat memory registered on its advisor chain.
+     *
+     * <p>Deliberately a second bean rather than memory added to {@link #chatClient}: that one is
+     * shared by every other demo, and several of them make judgements that must not see history
+     * &mdash; a router's classifier, an evaluator scoring a draft. Registering memory globally
+     * would quietly change what those agents are asked.</p>
+     *
+     * <p>Registration is all that happens here. Which conversation a given request belongs to is
+     * supplied per call, through the advisor customizer &mdash; see {@link ChatMemoryExample}.</p>
+     */
+    @Bean
+    public ChatClient memoryChatClient(ChatClient.Builder builder, ChatMemory chatMemory) {
+        return builder
+                .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())
+                .build();
     }
 
     @Bean
@@ -150,6 +188,24 @@ public class AgentApiApplication {
 
             String result = service.answer(question);
             System.out.println(result);
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "memory")
+    CommandLineRunner memoryRunner(ChatMemoryExample service) {
+        return args -> {
+            System.out.println("\n=== ChatMemoryExample result ===");
+
+            // Turn 2 is the demonstration: it never repeats the name, so a correct answer can
+            // only have come from turn 1's history.
+            System.out.println("[alice] " + service.ask("alice", "My name is Ronald. Remember it."));
+            System.out.println("[alice] " + service.ask("alice", "What is my name?"));
+
+            // Same agent instance, different conversation id. Asking the same question must
+            // now fail to recall, which is what shows the histories are actually separate
+            // rather than one shared buffer.
+            System.out.println("[bob]   " + service.ask("bob", "What is my name?"));
         };
     }
 

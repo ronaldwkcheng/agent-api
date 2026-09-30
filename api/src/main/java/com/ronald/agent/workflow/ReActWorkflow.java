@@ -120,11 +120,12 @@ public class ReActWorkflow implements AgenticWorkflow<String> {
      *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
-    public String invoke(String input) {
+    public String invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(attributes, "attributes must not be null");
         log.debug("react_start input=\"{}\" maxSteps={}", input, maxSteps);
 
-        Map<String, String> context = new HashMap<>();
+        Map<String, String> context = new HashMap<>(attributes);
         context.put(CTX_INPUT,      input);
         context.put(CTX_TOOLS,      buildToolsDescription());
         context.put(CTX_SCRATCHPAD, "");

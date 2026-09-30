@@ -70,8 +70,9 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
      * @throws IllegalStateException if the dispatched agent returns null
      */
     @Override
-    public T invoke(String input) {
+    public T invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(attributes, "attributes must not be null");
         log.info("router_start routes=[{}] inputLength={}", resolvedRoutesList, input.length());
 
         // ── Step 1: Classify ────────────────────────────────────────────────
@@ -93,7 +94,13 @@ public class ConditionalAgentRouter<T> implements AgenticWorkflow<T> {
         log.info("router_classified category={}", category);
 
         // ── Step 2: Build handler context ──────────────────────────────────
-        Map<String, String> context = Map.of(CTX_INPUT, input, CTX_ROUTE, category);
+        // The handler is seeded with the caller's attributes; the classifier above deliberately
+        // is not. Classification is a stateless one-shot judgement made through routingClient
+        // directly, and giving it conversation history would let earlier turns skew the route.
+        Map<String, String> handlerContext = new HashMap<>(attributes);
+        handlerContext.put(CTX_INPUT, input);
+        handlerContext.put(CTX_ROUTE, category);
+        Map<String, String> context = Collections.unmodifiableMap(handlerContext);
 
         // ── Step 3: Dispatch ────────────────────────────────────────────────
         RoutableSubAgent<T> dispatchedAgent = routes.get(category);
