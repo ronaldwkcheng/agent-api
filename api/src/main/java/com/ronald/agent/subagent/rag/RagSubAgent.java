@@ -113,7 +113,7 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
     private final String      systemPrompt;
 
     private RagSubAgent(Builder builder) {
-        super(builder.getChatClient(), String.class);
+        super(builder.getChatClient(), String.class, builder.getAdvisorCustomizer());
         this.vectorStore         = builder.vectorStore;
         this.topK                = builder.topK;
         this.similarityThreshold = builder.similarityThreshold;

@@ -18,7 +18,7 @@ public class DefaultPromptSubAgent extends AbstractPromptSubAgent<String> {
      * @param builder the Builder instance containing configuration
      */
     private DefaultPromptSubAgent(Builder builder) {
-        super(builder.getChatClient(), String.class);
+        super(builder.getChatClient(), String.class, builder.getAdvisorCustomizer());
         this.outputKey     = builder.outputKey;
         this.promptTemplate = Objects.requireNonNull(builder.getPromptTemplate(), "promptTemplate must not be null");
         this.systemPrompt  = builder.getSystemPrompt();
