@@ -65,6 +65,7 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
      * and evaluates the content until it passes evaluation or {@code maxAttempts} is exhausted.</p>
      *
      * @param input the original user task/request used as context throughout refinement
+     * @param attributes caller-supplied context entries, seeded before the workflow's own keys
      * @return the refined content that passed evaluation, or — under
      *         {@link ExhaustionPolicy#RETURN_PARTIAL} — the best draft after {@code maxAttempts}
      * @throws WorkflowExhaustedException if no draft passes within {@code maxAttempts} and the
@@ -73,11 +74,13 @@ public class IterativeRefinementWorkflow implements AgenticWorkflow<String> {
      *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
-    public String invoke(String input) {
+    public String invoke(String input, Map<String, String> attributes) {
+        Objects.requireNonNull(attributes, "attributes must not be null");
+
         String feedback = "Initial draft generation.";
         String content  = initialContent != null ? initialContent : "";
 
-        Map<String, String> context = new HashMap<>();
+        Map<String, String> context = new HashMap<>(attributes);
         context.put(CTX_INPUT,    input);
         context.put(CTX_CRITERIA, criteria);
         context.put(CTX_CONTENT,  content);

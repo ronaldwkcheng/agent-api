@@ -50,19 +50,21 @@ public class SequentialAgentChain<T> implements AgenticWorkflow<T> {
      * Executes each agent in order, passing the context with updated outputs between steps.
      * The final agent's result is returned, potentially deserialized into the specified output type.
      *
-     * @param input the initial input string
+     * @param input      the initial input string
+     * @param attributes caller-supplied context entries, seeded before the chain's own keys
      * @return the result from the final agent
-     * @throws NullPointerException if input is null
+     * @throws NullPointerException if input or attributes is null
      * @throws IllegalStateException if any agent returns null
      */
     @Override
     @SuppressWarnings("unchecked")
-    public T invoke(String input) {
+    public T invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(attributes, "attributes must not be null");
 
         log.info("chain_start agents={} inputLength={}", agents.size(), input.length());
 
-        Map<String, String> context = new HashMap<>();
+        Map<String, String> context = new HashMap<>(attributes);
         context.put(CTX_INPUT,  input);
         context.put(CTX_OUTPUT, input);
 

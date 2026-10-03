@@ -22,6 +22,7 @@ classDiagram
     class AgenticWorkflow~T~ {
         <<interface>>
         +invoke(String) T
+        +invoke(String, Map) T
     }
 
     class ConditionalAgentRouter~T~ {
@@ -33,7 +34,7 @@ classDiagram
         -RoutableSubAgent~T~ defaultAgent
         -T defaultResponse
         +builder()$ Builder~T~
-        +invoke(String) T
+        +invoke(String, Map) T
         -requireResult(RoutableSubAgent, Map) T
     }
 
@@ -295,3 +296,9 @@ but a `defaultAgent` is never registered in the route map, so that key is never 
 
 **`defaultResponse` is typed `T`, not `String`.** For a non-`String` router it must be a fully
 constructed instance of the result type.
+
+**The classifier never sees caller attributes.** When you pass `invoke(input, attributes)`, the
+handler and fallback agents receive those attributes in their context — but the classifier does
+not. Classification is a stateless one-shot judgment, and giving it conversation history would
+let earlier turns skew the route. If you need the classifier to behave differently per caller,
+encode that difference in the routing prompt template, not in attributes.

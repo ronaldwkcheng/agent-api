@@ -11,6 +11,7 @@ import org.springframework.ai.tool.annotation.Tool;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -61,8 +62,12 @@ class WorkflowExhaustionTest {
     /** Mocks the single structured-output call the internal agents make. */
     private static ChatClient chatClientReturning(Object entity) {
         ChatClient chatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
-        when(chatClient.prompt().messages(any(Message.class)).call().entity(any(Class.class)))
-                .thenReturn(entity);
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt();
+        when(spec.messages(any(Message.class))).thenReturn(spec);
+        // The agent threads a per-request advisor customizer through .advisors(...); return the
+        // same spec so the fluent chain stays on the stub the entity call is set up on.
+        when(spec.advisors(any(Consumer.class))).thenReturn(spec);
+        when(spec.call().entity(any(Class.class))).thenReturn(entity);
         return chatClient;
     }
 

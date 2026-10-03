@@ -13,6 +13,7 @@ import org.springframework.ai.vectorstore.filter.Filter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -94,6 +95,9 @@ class RagSubAgentTest {
             renderedPrompts.add(invocation.getArgument(0, Message.class).getText());
             return spec;
         });
+        // The agent threads a per-request advisor customizer through .advisors(...); return the
+        // same spec so the fluent chain stays on the stub the assertions below were set up on.
+        when(spec.advisors(any(Consumer.class))).thenReturn(spec);
         when(spec.call().content()).thenReturn(answer);
         return chatClient;
     }

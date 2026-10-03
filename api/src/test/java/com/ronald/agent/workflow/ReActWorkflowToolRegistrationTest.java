@@ -13,6 +13,7 @@ import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -87,6 +88,9 @@ class ReActWorkflowToolRegistrationTest {
             renderedPrompts.add(invocation.getArgument(0, Message.class).getText());
             return spec;
         });
+        // The agent threads a per-request advisor customizer through .advisors(...); return the
+        // same spec so the fluent chain stays on the stub the entity call is set up on.
+        when(spec.advisors(any(Consumer.class))).thenReturn(spec);
         when(spec.call().entity(any(Class.class))).thenReturn(thought);
         return chatClient;
     }

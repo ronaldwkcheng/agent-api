@@ -36,10 +36,12 @@ classDiagram
     class AgenticWorkflow~T~ {
         <<interface>>
         +invoke(String input) T
+        +invoke(String input, Map attributes) T
     }
 
     class SubAgent~T~ {
         <<interface>>
+        +CONVERSATION_ID$ String
         +getOutputKey() String
         +execute(Map context) T
     }
@@ -52,8 +54,10 @@ classDiagram
 
     class AbstractPromptSubAgent~T~ {
         <<abstract>>
+        +NO_ADVISORS$ BiConsumer
         -ChatClient chatClient
         -Class~T~ outputType
+        -BiConsumer advisorCustomizer
         +execute(Map) T
         +getPromptTemplate()* String
         +getSystemPrompt() String
@@ -96,69 +100,29 @@ classDiagram
     AgenticWorkflow ..> SubAgent : orchestrates
 ```
 
-**`AgenticWorkflow<T>`** — `T invoke(String input)`. One plain-text input, one typed result,
-never null. All six patterns implement it, which is what lets you swap one for another, nest
-them, or hand one to `AgenticWorkflowAdvisor`.
+**`AgenticWorkflow<T>`** — two forms of invocation:
 
-**`SubAgent<T>`** — one step. `execute(Map<String,String> context)` returns a typed result;
-`getOutputKey()` names the context slot the workflow files that result under. A sub-agent is
-usually one LLM call, but nothing requires it to be — `SimpleRouteFallbackAgent` is a plain Java
-method, and any `AgenticWorkflow` can be wrapped as a `SubAgent` to nest patterns.
+```java
+// Simple invocation — no caller context:
+T result = workflow.invoke(input);
 
-**`RoutableSubAgent<T>`** — a `SubAgent` that also answers `getRouteKey()`. Only
-`ConditionalAgentRouter` cares. `getOutputKey()` defaults to `null`.
-
-### The workflow implementations
-
-```mermaid
-classDiagram
-    direction TB
-
-    class AgenticWorkflow~T~ {
-        <<interface>>
-        +invoke(String) T
-    }
-
-    class SequentialAgentChain~T~ {
-        -List~SubAgent~ agents
-    }
-    class ParallelAgentOrchestrator~T~ {
-        -List~SubAgent~ subAgents
-        -SubAgent~T~ aggregator
-        -Executor executor
-        -Duration branchTimeout
-        -BranchFailurePolicy failurePolicy
-    }
-    class ConditionalAgentRouter~T~ {
-        -ChatClient routingClient
-        -Map routes
-        -RoutableSubAgent~T~ defaultAgent
-        -T defaultResponse
-    }
-    class IterativeRefinementWorkflow {
-        -SubAgent~String~ refinerAgent
-        -SubAgent~EvaluationResponse~ evaluatorAgent
-        -int maxAttempts
-    }
-    class PlanAndExecuteWorkflow~T~ {
-        -PlannerAgent plannerAgent
-        -SubAgent~String~ stepExecutor
-        -SubAgent~T~ synthesizer
-        -int maxSteps
-    }
-    class ReActWorkflow {
-        -ReActThinkerAgent thinkerAgent
-        -Map tools
-        -int maxSteps
-    }
-
-    AgenticWorkflow <|.. SequentialAgentChain
-    AgenticWorkflow <|.. ParallelAgentOrchestrator
-    AgenticWorkflow <|.. ConditionalAgentRouter
-    AgenticWorkflow <|.. IterativeRefinementWorkflow
-    AgenticWorkflow <|.. PlanAndExecuteWorkflow
-    AgenticWorkflow <|.. ReActWorkflow
+// With caller-supplied attributes (e.g., for chat memory):
+T result = workflow.invoke(input, Map.of(SubAgent.CONVERSATION_ID, conversationId));
 ```
+
+`invoke(String input)` is a default method that delegates to `invoke(String input, Map<String,String> attributes)` with an empty map. All workflow implementations override the two-argument form.
+
+**Attributes** seed the context every `SubAgent` in the workflow receives, _before_ the workflow adds its own keys. They exist for values that belong to the _call_ rather than the workflow's configuration — `SubAgent.CONVERSATION_ID` above all, which an advisor customizer reads to scope chat memory to one conversation. A workflow's own keys always win on collision: an attribute named `"input"` does not displace the actual input.
+
+**`SubAgent<T>`** — one step. `execute(Map<String,String> context)` returns a typed result; `getOutputKey()` names the context slot the workflow files that result under. The interface declares one reserved key:
+
+```java
+String CONVERSATION_ID = "conversationId";
+```
+
+No sub-agent reads this key itself. It is read by an advisor customizer to scope chat memory to one conversation — which is why workflows must never let a sub-agent's `outputKey` collide with it.
+
+**`RoutableSubAgent<T>`** — a `SubAgent` that also answers `getRouteKey()`. Only `ConditionalAgentRouter` cares. `getOutputKey()` defaults to `null`.
 
 ---
 
@@ -180,6 +144,7 @@ sequenceDiagram
     opt getSystemPrompt() is non-blank
         A->>CC: .system(systemPrompt)
     end
+    A->>CC: .advisors(advisorSpec -> advisorCustomizer.accept(advisorSpec, context))
     A->>CC: .prompt().messages(userMessage).call()
     alt outputType == String.class
         CC-->>A: .content()
@@ -189,27 +154,19 @@ sequenceDiagram
     A-->>W: T
 ```
 
-Two rules follow from this, and they cause most first-run failures:
+Three rules follow from this, and they cause most first-run failures:
 
-1. **Every `{placeholder}` in a template must exist in the context at that point.** Rendering is
-   Spring AI's `PromptTemplate`, which fails when a variable has no value. Each pattern guide
-   lists exactly which keys are in scope for each agent slot. Extra context entries the template
-   ignores are harmless.
-2. **A literal `{` in prompt text is a template delimiter.** Asking for JSON output by pasting a
-   `{"key": ...}` example into a template will not render. Describe the shape in prose, or use
-   typed output (`.entity(...)`) and let Spring AI generate the schema.
+1. **Every `{placeholder}` in a template must exist in the context at that point.** Rendering is Spring AI's `PromptTemplate`, which fails when a variable has no value. Each pattern guide lists exactly which keys are in scope for each agent slot. Extra context entries the template ignores are harmless.
+2. **A literal `{` in prompt text is a template delimiter.** Asking for JSON output by pasting a `{"key": ...}` example into a template will not render. Describe the shape in prose, or use typed output (`.entity(...)`) and let Spring AI generate the schema.
+3. **The advisor customizer runs on every `execute` call.** By default it is `NO_ADVISORS` (a no-op). Subclass `AbstractPromptSubAgent` and pass a customizer to the three-argument constructor if you need per-request advisor parameters — a `conversationId` for `MessageChatMemoryAdvisor`, for instance. Because agents are typically long-lived singletons, the customizer receives the live `context` map on each call rather than freezing a value at build time.
 
-Typed output is free: construct `AbstractPromptSubAgent` with a `Class<T>` other than
-`String.class` and Spring AI derives a JSON schema from the record, asks the model to conform,
-and deserializes. `PlanAndExecuteWorkflow.Plan`, `ReActWorkflow.ReActThought` and the iterative
-evaluator's `EvaluationResponse` all work this way.
+Typed output is free: construct `AbstractPromptSubAgent` with a `Class<T>` other than `String.class` and Spring AI derives a JSON schema from the record, asks the model to conform, and deserializes. `PlanAndExecuteWorkflow.Plan`, `ReActWorkflow.ReActThought` and the iterative evaluator's `EvaluationResponse` all work this way.
 
 ---
 
 ## Context map conventions
 
-Workflows thread state through a `Map<String, String>`. Keys are per-pattern, but the
-conventions are stable:
+Workflows thread state through a `Map<String, String>`. Keys are per-pattern, but the conventions are stable:
 
 | Key | Meaning | Patterns |
 |---|---|---|
@@ -220,6 +177,7 @@ conventions are stable:
 | `criteria`, `content`, `feedback` | Refinement loop state. | iterative |
 | `plan`, `stepId`, `stepDescription`, `previousResults`, `stepResults` | Plan state. | plan & execute |
 | `tools`, `scratchpad` | Tool descriptions and the reasoning trace. | ReAct |
+| `conversationId` | **Reserved.** Scopes chat memory to one conversation via advisor customizer. Never overwritten by any workflow. Pass it through `invoke(input, attributes)`. | all |
 | *your key* | Whatever a `SubAgent` returns from `getOutputKey()`. | sequential, parallel |
 
 ---
@@ -283,12 +241,9 @@ Note the cost: the advisor adds a full workflow run to **every** call made throu
 
 ## Adding a new pattern
 
-1. Implement `AgenticWorkflow<T>` in `com.ronald.agent.workflow`.
-2. Take collaborators as `SubAgent<?>`, not `ChatClient`, wherever the caller might want to
-   customise the prompt. Reach for `ChatClient` only for a fixed internal agent — see
-   `PlanAndExecuteWorkflow.PlannerAgent`.
-3. Give it a private constructor and a static `builder()`. Validate in `build()`, not in
-   `invoke()`, so misconfiguration fails at wiring time.
-4. If it is bounded, honour `ExhaustionPolicy` and throw `WorkflowExhaustedException` carrying
-   the partial result. Do not invent a new exhaustion convention.
+1. Implement `AgenticWorkflow<T>` in `com.ronald.agent.workflow`. Override `invoke(String input, Map<String, String> attributes)` — the one-argument `invoke(String)` is a default that delegates here with `Map.of()`, so callers who need to pass attributes (e.g., `conversationId` for chat memory) use the two-argument form.
+2. Take collaborators as `SubAgent<?>`, not `ChatClient`, wherever the caller might want to customise the prompt. Reach for `ChatClient` only for a fixed internal agent — see `PlanAndExecuteWorkflow.PlannerAgent`.
+3. Give it a private constructor and a static `builder()`. Validate in `build()`, not in `invoke()`, so misconfiguration fails at wiring time.
+4. If it is bounded, honour `ExhaustionPolicy` and throw `WorkflowExhaustedException` carrying the partial result. Do not invent a new exhaustion convention.
 5. Document the context keys it reads and writes, and add a guide under [`docs/`](docs).
+

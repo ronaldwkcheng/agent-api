@@ -20,7 +20,7 @@ public class DefaultPromptRoutableAgent extends AbstractPromptRoutableAgent<Stri
      * @param builder the Builder instance containing configuration
      */
     private DefaultPromptRoutableAgent(Builder builder) {
-        super(builder.getChatClient(), String.class);
+        super(builder.getChatClient(), String.class, builder.getAdvisorCustomizer());
         this.routeKey       = Objects.requireNonNull(builder.routeKey, "routeKey must not be null");
         this.promptTemplate = Objects.requireNonNull(builder.getPromptTemplate(), "promptTemplate must not be null");
         this.systemPrompt   = builder.getSystemPrompt();

@@ -1,5 +1,7 @@
 package com.ronald.agent.workflow;
 
+import java.util.Map;
+
 /**
  * Core abstraction for agentic workflows in this application.
  * <p>
@@ -23,12 +25,40 @@ package com.ronald.agent.workflow;
 public interface AgenticWorkflow<T> {
 
     /**
-     * Executes the workflow with the given input and returns the result.
+     * Executes the workflow with the given input and no caller-supplied attributes.
      *
      * @param input the plain-text input to process; must not be null
      * @return the workflow result; never null
      * @throws WorkflowExhaustedException if the workflow is bounded, exhausts its budget
      *                                    without completing, and uses {@link ExhaustionPolicy#THROW}
      */
-    T invoke(String input);
+    default T invoke(String input) {
+        return invoke(input, Map.of());
+    }
+
+    /**
+     * Executes the workflow with the given input and a map of caller-supplied attributes.
+     *
+     * <p>Attributes seed the context every {@link com.ronald.agent.subagent.SubAgent} in this
+     * workflow receives, before the workflow adds its own keys. They exist for values that
+     * belong to the <em>call</em> rather than to the workflow's configuration &mdash;
+     * {@link com.ronald.agent.subagent.SubAgent#CONVERSATION_ID} above all, which an advisor
+     * customizer reads to scope chat memory to one conversation.</p>
+     *
+     * <p>A workflow's own keys take precedence: an attribute named {@code "input"} does not
+     * displace the input, and an attribute colliding with a key the workflow computes is
+     * overwritten by the computed value. Attributes are therefore additive and cannot
+     * subvert a workflow's internal contract.</p>
+     *
+     * <p>This is the primitive operation &mdash; {@link #invoke(String)} delegates here with
+     * an empty map.</p>
+     *
+     * @param input      the plain-text input to process; must not be null
+     * @param attributes caller-supplied context entries; must not be null, may be empty
+     * @return the workflow result; never null
+     * @throws NullPointerException       if input or attributes is null
+     * @throws WorkflowExhaustedException if the workflow is bounded, exhausts its budget
+     *                                    without completing, and uses {@link ExhaustionPolicy#THROW}
+     */
+    T invoke(String input, Map<String, String> attributes);
 }

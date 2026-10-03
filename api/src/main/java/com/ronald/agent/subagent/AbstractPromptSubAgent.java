@@ -6,6 +6,7 @@ import org.springframework.ai.chat.prompt.PromptTemplate;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.BiConsumer;
 
 /**
  * Abstract base class for sub-agents that use prompt templates to interact with a ChatClient.
@@ -14,19 +15,50 @@ import java.util.Objects;
  */
 public abstract class AbstractPromptSubAgent<T> implements SubAgent<T> {
 
+    /**
+     * The no-op advisor customizer: the request is sent exactly as it was before this seam
+     * existed. This is the default for every agent, so advisor participation is opt-in.
+     */
+    public static final BiConsumer<ChatClient.AdvisorSpec, Map<String, String>> NO_ADVISORS =
+            (advisorSpec, context) -> { };
+
     private final ChatClient chatClient;
     private final Class<T> outputType;
+    private final BiConsumer<ChatClient.AdvisorSpec, Map<String, String>> advisorCustomizer;
 
     /**
-     * Constructs an AbstractPromptSubAgent with the specified ChatClient and output type.
+     * Constructs an AbstractPromptSubAgent with no advisor customization.
      *
      * @param chatClient the ChatClient used to execute prompts
      * @param outputType the Class of the output type T
      * @throws NullPointerException if chatClient or outputType is null
      */
     public AbstractPromptSubAgent(ChatClient chatClient, Class<T> outputType) {
+        this(chatClient, outputType, NO_ADVISORS);
+    }
+
+    /**
+     * Constructs an AbstractPromptSubAgent that customizes the advisor chain per request.
+     *
+     * <p>The customizer is invoked on every {@link #execute(Map)} call and receives the live
+     * context map, so advisor parameters that vary per request &mdash; a conversation id for
+     * {@code MessageChatMemoryAdvisor}, for instance &mdash; can be read from the context the
+     * caller supplied rather than frozen when the agent was built. Agents here are typically
+     * long-lived singletons, so a customizer fixed at build time could only ever carry one
+     * conversation's identity.</p>
+     *
+     * @param chatClient        the ChatClient used to execute prompts
+     * @param outputType        the Class of the output type T
+     * @param advisorCustomizer applied to the advisor spec of every request, with the context of
+     *                          that request; use {@link #NO_ADVISORS} for none
+     * @throws NullPointerException if any argument is null
+     */
+    public AbstractPromptSubAgent(ChatClient chatClient, Class<T> outputType,
+                                  BiConsumer<ChatClient.AdvisorSpec, Map<String, String>> advisorCustomizer) {
         this.chatClient = Objects.requireNonNull(chatClient, "chatClient must not be null");
         this.outputType = Objects.requireNonNull(outputType, "outputType must not be null");
+        this.advisorCustomizer =
+                Objects.requireNonNull(advisorCustomizer, "advisorCustomizer must not be null");
     }
 
     /**
@@ -47,6 +79,10 @@ public abstract class AbstractPromptSubAgent<T> implements SubAgent<T> {
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             spec = spec.system(systemPrompt);
         }
+
+        // Per-request advisor parameters. Defaults to NO_ADVISORS, in which case the spec is
+        // handed to the customizer untouched and comes back unchanged.
+        spec = spec.advisors(advisorSpec -> advisorCustomizer.accept(advisorSpec, context));
 
         if (String.class.equals(outputType)) {
             return (T) spec.call().content();

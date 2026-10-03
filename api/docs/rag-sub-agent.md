@@ -36,6 +36,7 @@ classDiagram
     class AgenticWorkflow~String~ {
         <<interface>>
         +invoke(String) String
+        +invoke(String, Map) String
     }
 
     class SubAgent~String~ {
@@ -57,7 +58,7 @@ classDiagram
         -String queryKey
         -String outputKey
         -String noDocumentsAnswer
-        +invoke(String) String
+        +invoke(String, Map) String
         +execute(Map) String
         +retrieve(String) List~Document~
         #formatDocuments(List) String

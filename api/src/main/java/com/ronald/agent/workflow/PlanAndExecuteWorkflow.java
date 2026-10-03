@@ -6,6 +6,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -129,15 +131,16 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
      *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
-    public T invoke(String input) {
+    public T invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
+        Objects.requireNonNull(attributes, "attributes must not be null");
         log.debug("plan_and_execute_start input=\"{}\"", input);
 
         // ── Phase 1: Plan ────────────────────────────────────────────────────
-        Map<String, String> plannerContext = Map.of(
+        Map<String, String> plannerContext = seeded(attributes, Map.of(
                 CTX_INPUT, input,
                 "maxSteps", String.valueOf(maxSteps)
-        );
+        ));
 
         Plan plan = plannerAgent.execute(plannerContext);
 
@@ -175,12 +178,12 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
             String stepId = String.valueOf(i + 1);
             log.debug("plan_execute_step stepId={} description=\"{}\"", stepId, step.description());
 
-            Map<String, String> stepContext = Map.of(
+            Map<String, String> stepContext = seeded(attributes, Map.of(
                     CTX_INPUT, input,
                     CTX_PLAN, formattedPlan,
                     CTX_STEP_ID, stepId,
                     CTX_STEP_DESCRIPTION, step.description(),
-                    CTX_PREVIOUS_RESULTS, previousResults.toString());
+                    CTX_PREVIOUS_RESULTS, previousResults.toString()));
 
             String result = stepExecutor.execute(stepContext);
             log.debug("plan_step_complete stepId={}", stepId);
@@ -192,15 +195,37 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
         }
 
         // ── Phase 3: Synthesize ──────────────────────────────────────────────
-        Map<String, String> synthesizerContext = Map.of(
+        Map<String, String> synthesizerContext = seeded(attributes, Map.of(
                 CTX_INPUT,        input,
                 CTX_PLAN,         formattedPlan,
                 CTX_STEP_RESULTS, allStepResults.toString()
-        );
+        ));
 
         T result = synthesizer.execute(synthesizerContext);
         log.debug("plan_and_execute_complete");
         return result;
+    }
+
+    /**
+     * Merges caller-supplied attributes under a phase's own context entries.
+     *
+     * <p>The phase entries are applied last and therefore win: an attribute cannot displace
+     * the input, the plan, or any value this workflow computes. All three phases are separate
+     * requests, so each is seeded independently &mdash; otherwise the planner would carry the
+     * conversation identity and the synthesizer would not.</p>
+     *
+     * @param attributes  the caller's attributes; may be empty
+     * @param phaseEntries the entries this phase contributes; take precedence on collision
+     * @return an unmodifiable merged context
+     */
+    private static Map<String, String> seeded(Map<String, String> attributes,
+                                              Map<String, String> phaseEntries) {
+        if (attributes.isEmpty()) {
+            return phaseEntries;
+        }
+        Map<String, String> merged = new HashMap<>(attributes);
+        merged.putAll(phaseEntries);
+        return Collections.unmodifiableMap(merged);
     }
 
     private String formatPlan(List<Step> steps) {

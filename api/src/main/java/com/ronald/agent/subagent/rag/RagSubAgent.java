@@ -10,6 +10,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -113,7 +114,7 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
     private final String      systemPrompt;
 
     private RagSubAgent(Builder builder) {
-        super(builder.getChatClient(), String.class);
+        super(builder.getChatClient(), String.class, builder.getAdvisorCustomizer());
         this.vectorStore         = builder.vectorStore;
         this.topK                = builder.topK;
         this.similarityThreshold = builder.similarityThreshold;
@@ -138,14 +139,19 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
     /**
      * Answers the question by retrieving from the vector store and generating over what came back.
      *
-     * @param input the question; must not be null
+     * @param input      the question; must not be null
+     * @param attributes caller-supplied context entries, seeded before the question
      * @return the grounded answer, or {@code noDocumentsAnswer} if retrieval found nothing
-     * @throws NullPointerException if {@code input} is null
+     * @throws NullPointerException if {@code input} or {@code attributes} is null
      */
     @Override
-    public String invoke(String input) {
+    public String invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
-        return execute(Map.of(queryKey, input));
+        Objects.requireNonNull(attributes, "attributes must not be null");
+
+        Map<String, String> context = new HashMap<>(attributes);
+        context.put(queryKey, input);
+        return execute(Collections.unmodifiableMap(context));
     }
 
     /**
