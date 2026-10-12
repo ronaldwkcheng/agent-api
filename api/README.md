@@ -26,7 +26,8 @@ of any of the six.
 
 `HumanReviewSubAgent` is a decorator rather than a pattern: it wraps any `SubAgent<String>` and
 holds its output for a person to approve, edit, send back for revision, or reject. Because it is a
-`SubAgent`, it adds an approval gate to any of the six without changing them.
+`SubAgent`, it adds an approval gate to any of the six without changing them. `ConsoleHumanReviewer`
+is a ready-made reviewer for interactive runs, extensible through protected hooks.
 
 ---
 

@@ -63,7 +63,19 @@ classDiagram
         +reject(String)$
     }
 
+    class ConsoleHumanReviewer {
+        +ConsoleHumanReviewer()
+        +ConsoleHumanReviewer(Reader, PrintStream)
+        +review(ReviewRequest) ReviewDecision
+        #renderProposal(ReviewRequest)
+        #readDecision(ReviewRequest) ReviewDecision
+        #onEndOfInput(ReviewRequest) ReviewDecision
+        #ask(String) String
+        #out() PrintStream
+    }
+
     SubAgent <|.. HumanReviewSubAgent
+    HumanReviewer <|.. ConsoleHumanReviewer
     HumanReviewSubAgent o--> SubAgent : delegate
     HumanReviewSubAgent --> HumanReviewer
     HumanReviewer ..> ReviewRequest
@@ -129,11 +141,57 @@ its result — downstream steps see the approved or edited text under the same k
 
 ---
 
-## Implementing a reviewer
+## Reviewers
 
-`HumanReviewer` is a functional interface and the only seam to a person. The library ships no
-implementation: the channel — terminal, Slack, ticket queue — is the application's choice, as the
-model provider is. `:example` has `ConsoleHumanReviewer`.
+`HumanReviewer` is a functional interface and the only seam to a person. The library ships one
+implementation, `ConsoleHumanReviewer`, for interactive runs; any other channel — Slack, a ticket
+queue, a web form — is the application's to supply, as the model provider is.
+
+### `ConsoleHumanReviewer`
+
+Shows the proposal on a text console and asks for `[a]pprove, [e]dit, [r]evise, re[j]ect`.
+
+```java
+new ConsoleHumanReviewer();                                     // System.in / System.out
+new ConsoleHumanReviewer(new StringReader("a
+"), printStream);  // any Reader / PrintStream
+```
+
+**Interactive use only.** In a web service or scheduled job standard input is closed or shared, so
+the first review hits end-of-input and fails the run. That is deliberate: a gate with no human
+attached must not approve anything.
+
+`review` is `final`, so these rules hold for every subclass:
+
+- **One review at a time.** `review` is `synchronized`; gated parallel branches queue instead of
+  interleaving prompts on one console.
+- **Revisions need feedback.** Blank feedback is asked again, never sent.
+- **No human, no approval.** End-of-input goes to `onEndOfInput`, never to an approve.
+- **ASCII output.** `System.out` uses the platform charset, so non-ASCII decoration arrives as
+  replacement characters on a Windows console.
+
+Extend it through the protected hooks:
+
+| Hook | Default | Override to |
+|---|---|---|
+| `renderProposal(request)` | header, proposal, footer | show `input` or other context, truncate long drafts |
+| `readDecision(request)` | single-key loop | change key bindings or wording; build on `ask(prompt)` |
+| `onEndOfInput(request)` | throws `IllegalStateException` | return `reject(...)` for a quieter stop — never `approve()` |
+
+`ask(prompt)` and `out()` are `final` helpers for those overrides. The `review` demo extends it to
+print the customer's complaint above the draft:
+
+```java
+class ComplaintAwareReviewer extends ConsoleHumanReviewer {
+    @Override
+    protected void renderProposal(ReviewRequest request) {
+        out().println("Customer wrote: " + request.context().get("input"));
+        super.renderProposal(request);
+    }
+}
+```
+
+### Your own channel
 
 ```java
 HumanReviewer reviewer = request -> {
@@ -206,4 +264,5 @@ feedback — it is the only thing telling the agent what to change.
   still runs. A `branchTimeout` also applies to the time a human takes to answer, so leave it unset
   or generous for gated branches — see [its guide](parallel-agent-orchestrator.md).
 - **`bootRun` and stdin.** Gradle does not connect `bootRun` to the console by default;
-  `:example` sets `standardInput = System.in` so `ConsoleHumanReviewer` can read.
+  `:example` sets `standardInput = System.in` so `ConsoleHumanReviewer` can read. Any other
+  application using it under `bootRun` needs the same line.

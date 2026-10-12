@@ -136,7 +136,7 @@ Human-in-the-loop is a decorator, not a workflow:
 
 | Pattern | Class | Description |
 |---|---|---|
-| Human review | `HumanReviewSubAgent` | Wraps any `SubAgent<String>`; a pluggable `HumanReviewer` approves, edits, requests a revision (bounded by `maxRevisions` + `ExhaustionPolicy`), or rejects (`ReviewRejectedException`). Adds an approval gate to any workflow step. The `:example` demo `review` reads the console, which is why `bootRun` forwards stdin. |
+| Human review | `HumanReviewSubAgent` | Wraps any `SubAgent<String>`; a pluggable `HumanReviewer` approves, edits, requests a revision (bounded by `maxRevisions` + `ExhaustionPolicy`), or rejects (`ReviewRejectedException`). Adds an approval gate to any workflow step. `ConsoleHumanReviewer` is the library's one reviewer — interactive runs only, extensible through protected hooks while `review` itself stays final. The `:example` demo `review` subclasses it, which is why `bootRun` forwards stdin. |
 
 ### Agent Implementation Layer
 
