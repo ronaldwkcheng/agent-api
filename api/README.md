@@ -15,6 +15,7 @@ implementations.
 | [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize |
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
 | [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
+| [Human-in-the-loop](docs/human-review-sub-agent.md) | `HumanReviewSubAgent` | propose → human review → approve / edit / revise / reject |
 
 Each guide covers the architecture, a UML class and sequence diagram, the context keys the
 pattern reads and writes, a full implementation walkthrough, and the failure modes.
@@ -22,6 +23,10 @@ pattern reads and writes, a full implementation walkthrough, and the failure mod
 `RagSubAgent` is the odd one out: an *agent* rather than an orchestration, it implements both
 `SubAgent<String>` and `AgenticWorkflow<String>`, so it answers on its own or serves as one step
 of any of the six.
+
+`HumanReviewSubAgent` is a decorator rather than a pattern: it wraps any `SubAgent<String>` and
+holds its output for a person to approve, edit, send back for revision, or reject. Because it is a
+`SubAgent`, it adds an approval gate to any of the six without changing them.
 
 ---
 
@@ -177,6 +182,7 @@ Workflows thread state through a `Map<String, String>`. Keys are per-pattern, bu
 | `criteria`, `content`, `feedback` | Refinement loop state. | iterative |
 | `plan`, `stepId`, `stepDescription`, `previousResults`, `stepResults` | Plan state. | plan & execute |
 | `tools`, `scratchpad` | Tool descriptions and the reasoning trace. | ReAct |
+| `reviewFeedback`, `previousDraft` | Human review state, seen only by the wrapped agent. Empty on the first attempt. | `HumanReviewSubAgent` |
 | `conversationId` | **Reserved.** Scopes chat memory to one conversation via advisor customizer. Never overwritten by any workflow. Pass it through `invoke(input, attributes)`. | all |
 | *your key* | Whatever a `SubAgent` returns from `getOutputKey()`. | sequential, parallel |
 

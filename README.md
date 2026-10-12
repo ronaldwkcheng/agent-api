@@ -77,6 +77,7 @@ unqualified task name resolves there.
 | `plan-and-execute` | Plan → execute → synthesize    | `PlanAndExecuteWorkflow`      |
 | `react`            | Thought → action → observation | `ReActWorkflow`               |
 | `rag`              | Retrieve → ground → answer     | `RagSubAgent`                 |
+| `review`           | Human approval of a draft      | `HumanReviewSubAgent`         |
 
 Values are matched exactly — Spring's relaxed binding does not apply to `@ConditionalOnProperty`
 values, so `plan-and-execute` will not match `planAndExecute`.
@@ -156,6 +157,19 @@ the previous results as context, and a synthesizer produces the final report.
 
 Input: *"The impact of artificial intelligence on the future of software engineering"*
 Output: a structured research report. **Up to 8 LLM calls** (1 plan + up to 6 steps + 1 synthesis).
+
+### `review` — Human-in-the-loop
+
+```bash
+./gradlew bootRun --args='--agent.demo=review'
+```
+
+Summarises a support complaint and drafts a reply, then **pauses for you on the terminal**: approve
+the draft, edit it yourself, send it back with feedback (re-drafted with your notes, up to 3 times),
+or reject it, which stops the run. `:example` forwards stdin to `bootRun` so the prompt can be
+answered.
+
+Output: the reply you approved or wrote. **2 LLM calls, plus 1 per revision.**
 
 ### `react` — Thought → action → observation
 

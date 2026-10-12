@@ -63,3 +63,9 @@ dependencies {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+// The `review` demo asks a person to approve on the terminal. Gradle does not connect bootRun's
+// stdin to the console by default, so without this every read sees end-of-stream at once.
+tasks.named<JavaExec>("bootRun") {
+    standardInput = System.`in`
+}

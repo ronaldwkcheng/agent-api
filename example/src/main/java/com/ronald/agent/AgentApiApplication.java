@@ -1,6 +1,7 @@
 package com.ronald.agent;
 
 import com.ronald.agent.example.*;
+import com.ronald.agent.subagent.review.ReviewRejectedException;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -28,7 +29,7 @@ import java.util.concurrent.Executors;
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
  * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code rag},
- * {@code memory}. Values are matched
+ * {@code memory}, {@code review}. Values are matched
  * exactly, so relaxed binding does not apply — spell them as written.</p>
  *
  * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
@@ -188,6 +189,22 @@ public class AgentApiApplication {
 
             String result = service.answer(question);
             System.out.println(result);
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "review")
+    CommandLineRunner reviewRunner(HumanReviewExample service) {
+        return args -> {
+            System.out.println("\n=== HumanReviewExample ===");
+            String userComplaint = "I was charged twice for my subscription this month and I need a refund!";
+            try {
+                String result = service.draftApprovedReply(userComplaint);
+                System.out.println("\n=== Approved reply ===");
+                System.out.println(result);
+            } catch (ReviewRejectedException e) {
+                System.out.println("\nRun stopped by reviewer: " + e.getMessage());
+            }
         };
     }
 
