@@ -86,7 +86,7 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `react`, or `rag`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `react`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -132,6 +132,12 @@ Alongside them, one retrieval agent:
 |---|---|---|
 | RAG | `RagSubAgent` | Semantic-searches a `VectorStore`, renders the passages into the prompt, returns the grounded answer. Implements **both** `SubAgent<String>` and `AgenticWorkflow<String>`, so it works standalone via `invoke` and as a step inside any of the six. Empty retrieval short-circuits to `noDocumentsAnswer` without an LLM call. |
 
+Human-in-the-loop is a decorator, not a workflow:
+
+| Pattern | Class | Description |
+|---|---|---|
+| Human review | `HumanReviewSubAgent` | Wraps any `SubAgent<String>`; a pluggable `HumanReviewer` approves, edits, requests a revision (bounded by `maxRevisions` + `ExhaustionPolicy`), or rejects (`ReviewRejectedException`). Adds an approval gate to any workflow step. The `:example` demo `review` reads the console, which is why `bootRun` forwards stdin. |
+
 ### Agent Implementation Layer
 
 - **`AbstractPromptSubAgent<T>`** — base class handling ChatClient invocation and prompt template rendering. Subclass and implement to define custom agent behavior.
@@ -148,6 +154,7 @@ Workflows pass state through a `Map<String, String>`. Key names are workflow-spe
 - `"scratchpad"` — accumulated thought/action/observation history (ReActWorkflow)
 - `"criteria"`, `"content"`, `"feedback"` — refinement loop state (IterativeRefinementWorkflow)
 - `"documents"` — formatted retrieved passages, written by `RagSubAgent` before its prompt renders
+- `"reviewFeedback"`, `"previousDraft"` — human review state, passed only to the agent `HumanReviewSubAgent` wraps; empty strings on the first attempt
 - Custom agent output keys are set via `getOutputKey()` on each `SubAgent`
 
 ### Example Usages
