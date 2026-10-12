@@ -16,6 +16,7 @@ implementations.
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
 | [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
 | [Human-in-the-loop](docs/human-review-sub-agent.md) | `HumanReviewSubAgent` | propose → human review → approve / edit / revise / reject |
+| [Agents as tools](docs/agent-tool-callback.md) | `AgentToolCallback` | wrap any agent or workflow as a `ToolCallback` |
 
 Each guide covers the architecture, a UML class and sequence diagram, the context keys the
 pattern reads and writes, a full implementation walkthrough, and the failure modes.
@@ -28,6 +29,10 @@ of any of the six.
 holds its output for a person to approve, edit, send back for revision, or reject. Because it is a
 `SubAgent`, it adds an approval gate to any of the six without changing them. `ConsoleHumanReviewer`
 is a ready-made reviewer for interactive runs, extensible through protected hooks.
+
+`AgentToolCallback` is an adapter rather than a pattern: it wraps any `SubAgent` or
+`AgenticWorkflow` as a Spring AI `ToolCallback`. Registered on a `ReActWorkflow`, it lets the model
+delegate to other agents (a supervisor), and it lets any workflow be nested inside another.
 
 ---
 

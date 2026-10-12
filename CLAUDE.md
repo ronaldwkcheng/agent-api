@@ -138,6 +138,12 @@ Human-in-the-loop is a decorator, not a workflow:
 |---|---|---|
 | Human review | `HumanReviewSubAgent` | Wraps any `SubAgent<String>`; a pluggable `HumanReviewer` approves, edits, requests a revision (bounded by `maxRevisions` + `ExhaustionPolicy`), or rejects (`ReviewRejectedException`). Adds an approval gate to any workflow step. `ConsoleHumanReviewer` is the library's one reviewer — interactive runs only, extensible through protected hooks while `review` itself stays final. The `:example` demo `review` subclasses it, which is why `bootRun` forwards stdin. |
 
+Agents as tools is an adapter, not a workflow:
+
+| Pattern | Class | Description |
+|---|---|---|
+| Agents as tools | `AgentToolCallback` | Wraps any `SubAgent` or `AgenticWorkflow` as a Spring AI `ToolCallback` (package `com.ronald.agent.tool`). Declared parameters become required string arguments — context entries for a sub-agent; `input` plus attributes for a workflow. `conversationId` can only arrive through the `ToolContext`, never as a model argument. Registered on `ReActWorkflow`, it makes ReAct a supervisor and lets workflows nest. Call-time failures are `ToolExecutionException`s with the original as cause. |
+
 ### Agent Implementation Layer
 
 - **`AbstractPromptSubAgent<T>`** — base class handling ChatClient invocation and prompt template rendering. Subclass and implement to define custom agent behavior.

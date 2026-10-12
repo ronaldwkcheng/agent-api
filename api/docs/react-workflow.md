@@ -183,6 +183,10 @@ dozens of tools inflates `{tools}` in *every* prompt of every step, and a transp
 throws out of `invoke` rather than becoming an observation (see [Gotchas](#gotchas)), so filter
 and wrap third-party callbacks before registering them.
 
+Other agents can be tools too. `AgentToolCallback` wraps any `SubAgent` or `AgenticWorkflow` as a
+`ToolCallback`, so registering it through `toolCallbacks(...)` makes this loop a supervisor that
+delegates to them — see [Agents as tools](agent-tool-callback.md).
+
 `actionInput` is typed `JsonNode` rather than `Map` or `String` on purpose: Jackson can
 deserialize both an object and an explicit `null` into it without erroring, and the model is
 instructed to send `null` on the final step.
