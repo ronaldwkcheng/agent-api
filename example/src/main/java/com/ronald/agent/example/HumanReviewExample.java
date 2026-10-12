@@ -1,7 +1,9 @@
 package com.ronald.agent.example;
 
 import com.ronald.agent.subagent.DefaultPromptSubAgent;
+import com.ronald.agent.subagent.review.ConsoleHumanReviewer;
 import com.ronald.agent.subagent.review.HumanReviewSubAgent;
+import com.ronald.agent.subagent.review.ReviewRequest;
 import com.ronald.agent.workflow.AgenticWorkflow;
 import com.ronald.agent.workflow.SequentialAgentChain;
 import lombok.RequiredArgsConstructor;
@@ -55,7 +57,7 @@ public class HumanReviewExample {
 
         HumanReviewSubAgent reviewedReply = HumanReviewSubAgent.builder()
                 .delegate(replyStep)
-                .reviewer(new ConsoleHumanReviewer())
+                .reviewer(new ComplaintAwareReviewer())
                 .stepName("customer reply")
                 .maxRevisions(3)
                 .build();
@@ -65,5 +67,19 @@ public class HumanReviewExample {
                 .build();
 
         return workflow.invoke(userComplaint);
+    }
+
+    /**
+     * Extends the library's console reviewer to show the customer's complaint above the draft,
+     * so the person can judge the reply against what was actually asked. Only the rendering hook
+     * is overridden; the decision loop and its safety rules come from the base class.
+     */
+    private static final class ComplaintAwareReviewer extends ConsoleHumanReviewer {
+        @Override
+        protected void renderProposal(ReviewRequest request) {
+            out().println();
+            out().println("Customer wrote: " + request.context().get("input"));
+            super.renderProposal(request);
+        }
     }
 }
