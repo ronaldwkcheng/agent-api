@@ -86,7 +86,7 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `react`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `react`, `supervisor`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -137,6 +137,12 @@ Human-in-the-loop is a decorator, not a workflow:
 | Pattern | Class | Description |
 |---|---|---|
 | Human review | `HumanReviewSubAgent` | Wraps any `SubAgent<String>`; a pluggable `HumanReviewer` approves, edits, requests a revision (bounded by `maxRevisions` + `ExhaustionPolicy`), or rejects (`ReviewRejectedException`). Adds an approval gate to any workflow step. `ConsoleHumanReviewer` is the library's one reviewer — interactive runs only, extensible through protected hooks while `review` itself stays final. The `:example` demo `review` subclasses it, which is why `bootRun` forwards stdin. |
+
+Agents as tools is an adapter, not a workflow:
+
+| Pattern | Class | Description |
+|---|---|---|
+| Agents as tools | `AgentToolCallback` | Wraps any `SubAgent` or `AgenticWorkflow` as a Spring AI `ToolCallback` (package `com.ronald.agent.tool`). Declared parameters become required string arguments — context entries for a sub-agent; `input` plus attributes for a workflow. `conversationId` can only arrive through the `ToolContext`, never as a model argument. Registered on `ReActWorkflow`, it makes ReAct a supervisor and lets workflows nest. Call-time failures are `ToolExecutionException`s with the original as cause. |
 
 ### Agent Implementation Layer
 

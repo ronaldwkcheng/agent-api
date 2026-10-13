@@ -28,7 +28,7 @@ import java.util.concurrent.Executors;
  * }</pre>
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
- * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code rag},
+ * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code supervisor}, {@code rag},
  * {@code memory}, {@code review}. Values are matched
  * exactly, so relaxed binding does not apply — spell them as written.</p>
  *
@@ -189,6 +189,20 @@ public class AgentApiApplication {
 
             String result = service.answer(question);
             System.out.println(result);
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "supervisor")
+    CommandLineRunner supervisorRunner(SupervisorExample service) {
+        return args -> {
+            System.out.println("\n=== SupervisorExample result ===");
+            String task = """
+                    A customer wrote: "I was charged twice for my subscription this month and I need a refund!"
+                    Give me a one-sentence summary of the complaint, then a reply to the customer
+                    in English and the same reply translated into Spanish.
+                    """;
+            System.out.println(service.handle(task));
         };
     }
 

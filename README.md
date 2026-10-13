@@ -76,6 +76,7 @@ unqualified task name resolves there.
 | `iterative`        | Generate → evaluate loop       | `IterativeRefinementWorkflow` |
 | `plan-and-execute` | Plan → execute → synthesize    | `PlanAndExecuteWorkflow`      |
 | `react`            | Thought → action → observation | `ReActWorkflow`               |
+| `supervisor`       | ReAct delegating to agents     | `AgentToolCallback`           |
 | `rag`              | Retrieve → ground → answer     | `RagSubAgent`                 |
 | `review`           | Human approval of a draft      | `HumanReviewSubAgent`         |
 
@@ -196,6 +197,23 @@ one, and the loop would spend its whole 8-step budget discovering that.
 
 Watch the scratchpad build up across iterations at `DEBUG`. **Up to 8 LLM calls**, plus local
 (free) tool invocations.
+
+### `supervisor` — Agents as tools
+
+```bash
+./gradlew bootRun --args='--agent.demo=supervisor'
+```
+
+A `ReActWorkflow` with no `@Tool` methods at all: its three tools are other agents, each wrapped
+with `AgentToolCallback`. `draft_reply` is a whole `SequentialAgentChain` (categorise → reply),
+so one tool call runs a nested workflow. `translate` and `summarize` are single sub-agents whose
+declared parameters (`text`, `language`) fill their prompt placeholders directly. The supervisor
+decides the order itself.
+
+Input: the double-charge complaint, with a request for a summary, a reply, and a Spanish
+translation of the reply.
+Output: all three. **About 8 LLM calls** — 4 supervisor steps, plus 2 for the nested chain and 1
+each for the other two tools; the cap is 6 supervisor steps.
 
 ---
 

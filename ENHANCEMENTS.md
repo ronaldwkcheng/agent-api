@@ -21,9 +21,12 @@ class with tests and a guide in `api/docs/`), **L** (a new abstraction).
 
 ## 2. Small extensions to existing classes
 
-### 2.1 `SubAgent` / `AgenticWorkflow` as a `ToolCallback` adapter — highest leverage
-Wrap any sub-agent or workflow as a Spring AI `ToolCallback` so `ReActWorkflow` can call it as a
-tool. This makes 1.3 (Supervisor) almost free and allows workflows to be nested. **S**
+### 2.1 `SubAgent` / `AgenticWorkflow` as a `ToolCallback` adapter — done
+Built as `AgentToolCallback` (`com.ronald.agent.tool`); see
+[`api/docs/agent-tool-callback.md`](api/docs/agent-tool-callback.md). It wraps any sub-agent or
+workflow as a Spring AI `ToolCallback` so `ReActWorkflow` can call it as a tool, which makes 1.3
+(Supervisor) almost free and allows workflows to be nested. Open follow-up: `ReActWorkflow` calls
+tools without a `ToolContext`, so `conversationId` does not yet reach nested agents.
 
 ### 2.2 `PlanAndExecuteWorkflow`
 - **Re-planning:** run the planner again after each step, or only after a step fails, using the
@@ -55,7 +58,7 @@ tool. This makes 1.3 (Supervisor) almost free and allows workflows to be nested.
 
 ## 3. Suggested order
 
-1. **2.1 ToolCallback adapter.** Small, and it opens up 1.3.
+1. ~~**2.1 ToolCallback adapter.**~~ Done; it opens up 1.3.
 2. **1.1 Orchestrator–Workers.** The most commonly cited pattern still missing; it can reuse the
    fan-out and timeout code in `ParallelAgentOrchestrator`.
 3. **1.5 Guardrails.** Small, decorator-shaped like `HumanReviewSubAgent`, and useful in
