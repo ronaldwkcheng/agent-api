@@ -28,6 +28,12 @@ String answer = ReActWorkflow.builder()
         .invoke("Explain our refund policy in French.");
 ```
 
+A runnable version is the `supervisor` demo — `SupervisorExample` in `:example`:
+
+```bash
+./gradlew bootRun --args='--agent.demo=supervisor'
+```
+
 ---
 
 ## Architecture

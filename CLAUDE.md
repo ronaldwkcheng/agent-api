@@ -86,7 +86,7 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `react`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `react`, `supervisor`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
