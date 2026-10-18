@@ -1,6 +1,6 @@
 # `:api` — Agentic Workflow Library
 
-Six agentic workflow patterns and a retrieval-augmented generation agent, built on Spring AI.
+Seven agentic workflow patterns and a retrieval-augmented generation agent, built on Spring AI.
 This module is a plain `java-library`: no Spring Boot plugin, no autoconfiguration, no `main`,
 and **no model provider and no vector store** — it compiles against `spring-ai-client-chat` and
 `spring-ai-vector-store`, the two interface modules, and the application supplies both
@@ -13,6 +13,7 @@ implementations.
 | [Conditional router](docs/conditional-agent-router.md) | `ConditionalAgentRouter<T>` | classify → dispatch → fallback |
 | [Iterative refinement](docs/iterative-refinement-workflow.md) | `IterativeRefinementWorkflow` | refine ⇄ evaluate, until PASS |
 | [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize |
+| [Orchestrator-workers](docs/orchestrator-workers-workflow.md) | `OrchestratorWorkersWorkflow<T>` | orchestrate ⇉ work (runtime fan-out) ⇉ synthesize |
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
 | [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
 | [Human-in-the-loop](docs/human-review-sub-agent.md) | `HumanReviewSubAgent` | propose → human review → approve / edit / revise / reject |

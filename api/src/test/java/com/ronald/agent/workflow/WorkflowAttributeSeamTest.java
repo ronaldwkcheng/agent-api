@@ -2,17 +2,24 @@ package com.ronald.agent.workflow;
 
 import com.ronald.agent.subagent.SubAgent;
 import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Verifies that caller-supplied attributes reach every sub-agent's context, in each engine.
@@ -101,6 +108,38 @@ class WorkflowAttributeSeamTest {
         // The aggregator context is built separately from the fan-out context, so it is a
         // distinct opportunity to lose the attributes.
         assertEquals(CONVERSATION, aggregator.onlyContext().get(SubAgent.CONVERSATION_ID));
+    }
+
+    /** Mocks the single structured-output call the orchestrator agent makes. */
+    private static ChatClient chatClientReturning(Object entity) {
+        ChatClient chatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt();
+        when(spec.messages(any(Message.class))).thenReturn(spec);
+        when(spec.advisors(any(Consumer.class))).thenReturn(spec);
+        when(spec.call().entity(any(Class.class))).thenReturn(entity);
+        return chatClient;
+    }
+
+    @Test
+    void orchestratorWorkersSeedsWorkerAndSynthesizer() {
+        RecordingAgent worker = new RecordingAgent("workerResult");
+        RecordingAgent synthesizer = new RecordingAgent("summary");
+
+        ChatClient orchestratorClient = chatClientReturning(new OrchestratorWorkersWorkflow.Breakdown(
+                List.of(new OrchestratorWorkersWorkflow.Subtask("do the one thing"))));
+
+        OrchestratorWorkersWorkflow.<String>builder()
+                .chatClient(orchestratorClient)
+                .worker(worker)
+                .synthesizer(synthesizer)
+                .executor(DIRECT_EXECUTOR)
+                .build()
+                .invoke("a task", Map.of(SubAgent.CONVERSATION_ID, CONVERSATION));
+
+        assertEquals(CONVERSATION, worker.onlyContext().get(SubAgent.CONVERSATION_ID));
+        // The synthesizer context is built separately from the fan-out context, so it is a
+        // distinct opportunity to lose the attributes.
+        assertEquals(CONVERSATION, synthesizer.onlyContext().get(SubAgent.CONVERSATION_ID));
     }
 
     // -------------------------------------------------------------------------

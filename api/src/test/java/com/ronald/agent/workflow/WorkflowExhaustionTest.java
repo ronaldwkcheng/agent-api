@@ -122,6 +122,58 @@ class WorkflowExhaustionTest {
         assertEquals(3, stepExecutor.calls.get());
     }
 
+    // ── OrchestratorWorkersWorkflow: breakdown wider than the budget ─────────
+
+    private static OrchestratorWorkersWorkflow.Builder<String> orchestratorWorkersWith(
+            int plannedSubtasks, int maxSubtasks, CountingAgent worker) {
+        List<OrchestratorWorkersWorkflow.Subtask> subtasks = java.util.stream.IntStream
+                .rangeClosed(1, plannedSubtasks)
+                .mapToObj(i -> new OrchestratorWorkersWorkflow.Subtask("subtask " + i))
+                .toList();
+
+        return OrchestratorWorkersWorkflow.<String>builder()
+                .chatClient(chatClientReturning(new OrchestratorWorkersWorkflow.Breakdown(subtasks)))
+                .worker(worker)
+                .synthesizer(new CountingAgent("summary"))
+                .executor(Runnable::run)
+                .maxSubtasks(maxSubtasks);
+    }
+
+    @Test
+    void breakdownExceedingBudgetThrowsByDefaultInsteadOfTruncatingSilently() {
+        CountingAgent worker = new CountingAgent("workerResult");
+
+        WorkflowExhaustedException ex = assertThrows(WorkflowExhaustedException.class,
+                () -> orchestratorWorkersWith(5, 3, worker).build().invoke("a task"));
+
+        assertEquals(3, ex.getLimit());
+        assertTrue(ex.getMessage().contains("5 subtasks"), ex.getMessage());
+        assertTrue(ex.getPartialResult().contains("subtask 5"),
+                "the full breakdown that could not be executed must be preserved");
+        assertEquals(0, worker.calls.get(), "must fail before spending calls on a doomed breakdown");
+    }
+
+    @Test
+    void breakdownExceedingBudgetTruncatesUnderReturnPartial() {
+        CountingAgent worker = new CountingAgent("workerResult");
+
+        orchestratorWorkersWith(5, 3, worker)
+                .exhaustionPolicy(ExhaustionPolicy.RETURN_PARTIAL)
+                .build()
+                .invoke("a task");
+
+        assertEquals(3, worker.calls.get(), "only the first maxSubtasks subtasks should run");
+    }
+
+    @Test
+    void breakdownWithinBudgetIsUnaffected() {
+        CountingAgent worker = new CountingAgent("workerResult");
+
+        orchestratorWorkersWith(3, 6, worker).build().invoke("a task");
+
+        assertEquals(3, worker.calls.get());
+    }
+
     // ── ReActWorkflow: no final answer within maxSteps ───────────────────────
 
     private static ReActWorkflow.Builder reactWorkflowNeverFinishing() {

@@ -28,8 +28,8 @@ import java.util.concurrent.Executors;
  * }</pre>
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
- * {@code iterative}, {@code plan-and-execute}, {@code react}, {@code supervisor}, {@code rag},
- * {@code memory}, {@code review}. Values are matched
+ * {@code iterative}, {@code plan-and-execute}, {@code orchestrator-workers}, {@code react},
+ * {@code supervisor}, {@code rag}, {@code memory}, {@code review}. Values are matched
  * exactly, so relaxed binding does not apply — spell them as written.</p>
  *
  * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
@@ -165,6 +165,18 @@ public class AgentApiApplication {
             System.out.println("\n=== PlanAndExecuteWorkflowExample result ===");
             String topic = "The impact of artificial intelligence on the future of software engineering";
             String result = service.research(topic);
+            System.out.println(result);
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "orchestrator-workers")
+    CommandLineRunner orchestratorWorkersRunner(OrchestratorWorkersWorkflowExample service) {
+        return args -> {
+            System.out.println("\n=== OrchestratorWorkersWorkflowExample result ===");
+            String task = "Write a short product announcement for a new espresso machine, "
+                    + "covering its key features, pricing, and a brief FAQ.";
+            String result = service.write(task);
             System.out.println(result);
         };
     }

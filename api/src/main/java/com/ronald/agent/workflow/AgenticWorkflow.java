@@ -13,7 +13,8 @@ import java.util.Map;
  * <h2>Exhaustion</h2>
  * <p>
  * Workflows bounded by a step or attempt budget ({@code ReActWorkflow},
- * {@code IterativeRefinementWorkflow}, {@code PlanAndExecuteWorkflow}) share one convention:
+ * {@code IterativeRefinementWorkflow}, {@code PlanAndExecuteWorkflow},
+ * {@code OrchestratorWorkersWorkflow}) share one convention:
  * exceeding that budget throws {@link WorkflowExhaustedException}, which carries whatever
  * partial output was produced. A workflow never silently returns an incomplete result as
  * though it were a finished one. Callers who prefer the partial result can either read it
