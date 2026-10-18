@@ -86,7 +86,7 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `react`, `supervisor`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `orchestrator-workers`, `react`, `supervisor`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -109,13 +109,13 @@ every agent slot, an implementation walkthrough, and the failure modes. **When y
 workflow's context keys, builder validation, defaults, or exhaustion behaviour, update its guide
 in the same commit.** The section below is the summary; the guides are the reference.
 
-This project implements six **agentic workflow patterns** built on top of Spring AI and Spring Boot. The central abstractions are:
+This project implements seven **agentic workflow patterns** built on top of Spring AI and Spring Boot. The central abstractions are:
 
-- **`AgenticWorkflow<T>`** — top-level interface: `T invoke(String input)`. All six patterns implement this.
+- **`AgenticWorkflow<T>`** — top-level interface: `T invoke(String input)`. All seven patterns implement this.
 - **`SubAgent<T>`** — executes a single LLM step given a `Map<String, String>` context; returns a typed result.
 - **`RoutableSubAgent<T>`** — extends `SubAgent` with a `getRouteKey()` for use in conditional routing.
 
-### The Six Workflow Patterns
+### The Seven Workflow Patterns
 
 | Pattern | Class | Description |
 |---|---|---|
@@ -124,6 +124,7 @@ This project implements six **agentic workflow patterns** built on top of Spring
 | Conditional | `ConditionalAgentRouter<T>` | An LLM classifier picks a route key; the matching `RoutableSubAgent` handles the request |
 | Iterative | `IterativeRefinementWorkflow` | Generate → Evaluate loop with a private `EvaluatorAgent`; exits on pass or max attempts |
 | Plan & Execute | `PlanAndExecuteWorkflow<T>` | Planner decomposes input into steps; executor runs each step sequentially with accumulated context; synthesizer produces final typed output |
+| Orchestrator-Workers | `OrchestratorWorkersWorkflow<T>` | An orchestrator LLM decomposes input into N subtasks at runtime; a single worker agent runs once per subtask concurrently; synthesizer produces final typed output |
 | ReAct | `ReActWorkflow` | Thought → Action → Observation loop; tools are registered with Spring AI's `@Tool` annotation |
 
 Alongside them, one retrieval agent:
