@@ -17,6 +17,7 @@ implementations.
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
 | [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
 | [Human-in-the-loop](docs/human-review-sub-agent.md) | `HumanReviewSubAgent` | propose → human review → approve / edit / revise / reject |
+| [Guardrails](docs/guardrail-sub-agent.md) | `GuardrailSubAgent` | check input → run → check output → pass / rewrite / retry / block |
 | [Agents as tools](docs/agent-tool-callback.md) | `AgentToolCallback` | wrap any agent or workflow as a `ToolCallback` |
 
 Each guide covers the architecture, a UML class and sequence diagram, the context keys the
@@ -30,6 +31,11 @@ of any of the six.
 holds its output for a person to approve, edit, send back for revision, or reject. Because it is a
 `SubAgent`, it adds an approval gate to any of the six without changing them. `ConsoleHumanReviewer`
 is a ready-made reviewer for interactive runs, extensible through protected hooks.
+
+`GuardrailSubAgent` is its automated counterpart: it wraps any `SubAgent<String>` with input and
+output `Guardrail`s that pass, rewrite (redact), send the output back for a retry, or block.
+`Guardrails` supplies deterministic checks (length, block or redact by pattern) and `PromptGuardrail`
+a policy judged by a model.
 
 `AgentToolCallback` is an adapter rather than a pattern: it wraps any `SubAgent` or
 `AgenticWorkflow` as a Spring AI `ToolCallback`. Registered on a `ReActWorkflow`, it lets the model
@@ -190,6 +196,7 @@ Workflows thread state through a `Map<String, String>`. Keys are per-pattern, bu
 | `plan`, `stepId`, `stepDescription`, `previousResults`, `stepResults` | Plan state. | plan & execute |
 | `tools`, `scratchpad` | Tool descriptions and the reasoning trace. | ReAct |
 | `reviewFeedback`, `previousDraft` | Human review state, seen only by the wrapped agent. Empty on the first attempt. | `HumanReviewSubAgent` |
+| `guardrailFeedback`, `previousOutput` | Guardrail retry state, seen only by the wrapped agent. Empty on the first attempt. | `GuardrailSubAgent` |
 | `conversationId` | **Reserved.** Scopes chat memory to one conversation via advisor customizer. Never overwritten by any workflow. Pass it through `invoke(input, attributes)`. | all |
 | *your key* | Whatever a `SubAgent` returns from `getOutputKey()`. | sequential, parallel |
 
