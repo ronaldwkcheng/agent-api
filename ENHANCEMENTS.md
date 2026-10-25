@@ -15,7 +15,7 @@ class with tests and a guide in `api/docs/`), **L** (a new abstraction).
 | 1.2 | **Voting / Ensemble** | Run the *same* agent N times (or across models), then pick by majority vote or a judge agent. The parallel workflow only fans out to *different* agents. | S–M |
 | 1.3 | **Supervisor / Hierarchical** | A supervisor LLM keeps choosing which sub-agent to call next until it decides it is done. `ConditionalAgentRouter` routes only once. | M (S after 2.1) |
 | 1.4 | **Handoff / Swarm** | Agents pass control to each other peer to peer over one shared context, with a cap on the number of handoffs, honouring `ExhaustionPolicy`. | M |
-| 1.5 | **Guardrails** (decorator) | Input and output checks around any `SubAgent`, such as PII, schema or policy checks. It is the automated version of `HumanReviewSubAgent` and could reuse the `ReviewDecision` shape. | S–M |
+| 1.5 | **Guardrails** (decorator) — done | Input and output checks around any `SubAgent`, such as PII, schema or policy checks. It is the automated version of `HumanReviewSubAgent` and could reuse the `ReviewDecision` shape. | S–M |
 | 1.6 | **Graph / State-machine workflow** | Named nodes plus conditional edges, with cycles allowed. This generalises all six current patterns (LangGraph-style). | L |
 | 1.7 | **Corrective / Agentic RAG** | Grade the retrieved documents, then rewrite the query and search again if they are poor. Today `RagSubAgent` retrieves once. | M |
 
@@ -26,6 +26,14 @@ internal orchestrator agent produces a `Breakdown` of `Subtask`s from the input,
 `BranchFailurePolicy`, reusing the fan-out/timeout technique from `ParallelAgentOrchestrator`), and
 a typed synthesizer combines the results. A breakdown wider than `maxSubtasks` follows the same
 `ExhaustionPolicy` convention as `PlanAndExecuteWorkflow`'s step budget.
+
+1.5 is built as `GuardrailSubAgent` (`com.ronald.agent.subagent.guardrail`); see
+[`api/docs/guardrail-sub-agent.md`](api/docs/guardrail-sub-agent.md). It wraps any
+`SubAgent<String>` with ordered input and output `Guardrail`s whose `GuardrailDecision` mirrors
+`ReviewDecision` (pass / rewrite / retry / block). Output retries follow the `ExhaustionPolicy`
+convention. `Guardrails` ships length and pattern block/redact checks; `PromptGuardrail` judges a
+plain-language policy with a model. Open follow-up: a typed (non-`String`) variant, e.g. a schema
+check on an entity-returning agent.
 
 ## 2. Small extensions to existing classes
 
@@ -68,8 +76,7 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 
 1. ~~**2.1 ToolCallback adapter.**~~ Done; it opens up 1.3.
 2. ~~**1.1 Orchestrator–Workers.**~~ Done.
-3. **1.5 Guardrails.** Small, decorator-shaped like `HumanReviewSubAgent`, and useful in
-   production.
+3. ~~**1.5 Guardrails.**~~ Done.
 4. Then pick based on need: 1.2 / 2.2 / 1.7 / 1.6.
 
 Per `CLAUDE.md`, each new pattern needs:
