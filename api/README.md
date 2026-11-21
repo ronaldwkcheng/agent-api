@@ -1,6 +1,6 @@
 # `:api` — Agentic Workflow Library
 
-Seven agentic workflow patterns and a retrieval-augmented generation agent, built on Spring AI.
+Eight agentic workflow patterns and a retrieval-augmented generation agent, built on Spring AI.
 This module is a plain `java-library`: no Spring Boot plugin, no autoconfiguration, no `main`,
 and **no model provider and no vector store** — it compiles against `spring-ai-client-chat` and
 `spring-ai-vector-store`, the two interface modules, and the application supplies both
@@ -14,6 +14,7 @@ implementations.
 | [Iterative refinement](docs/iterative-refinement-workflow.md) | `IterativeRefinementWorkflow` | refine ⇄ evaluate, until PASS |
 | [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize |
 | [Orchestrator-workers](docs/orchestrator-workers-workflow.md) | `OrchestratorWorkersWorkflow<T>` | orchestrate ⇉ work (runtime fan-out) ⇉ synthesize |
+| [Voting / ensemble](docs/voting-agent-orchestrator.md) | `VotingAgentOrchestrator<T>` | fan-out (same question) ⇉ vote or judge |
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
 | [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
 | [Human-in-the-loop](docs/human-review-sub-agent.md) | `HumanReviewSubAgent` | propose → human review → approve / edit / revise / reject |
@@ -195,6 +196,8 @@ Workflows thread state through a `Map<String, String>`. Keys are per-pattern, bu
 | `criteria`, `content`, `feedback` | Refinement loop state. | iterative |
 | `plan`, `stepId`, `stepDescription`, `previousResults`, `stepResults` | Plan state. | plan & execute |
 | `tools`, `scratchpad` | Tool descriptions and the reasoning trace. | ReAct |
+| `sampleIndex`, `sampleCount` | This sample's 1-based position and the total sample count. | `VotingAgentOrchestrator` |
+| `candidates` | Every distinct surviving candidate, annotated with how many samples agreed. Judge mode only. | `VotingAgentOrchestrator` |
 | `reviewFeedback`, `previousDraft` | Human review state, seen only by the wrapped agent. Empty on the first attempt. | `HumanReviewSubAgent` |
 | `guardrailFeedback`, `previousOutput` | Guardrail retry state, seen only by the wrapped agent. Empty on the first attempt. | `GuardrailSubAgent` |
 | `conversationId` | **Reserved.** Scopes chat memory to one conversation via advisor customizer. Never overwritten by any workflow. Pass it through `invoke(input, attributes)`. | all |
