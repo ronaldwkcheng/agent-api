@@ -86,7 +86,8 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `orchestrator-workers`, `react`, `supervisor`, `rag`, `memory`, or `review`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `orchestrator-workers`, `react`, `supervisor`, `rag`, `memory`, `review`, or
+`guardrail`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -138,6 +139,12 @@ Human-in-the-loop is a decorator, not a workflow:
 | Pattern | Class | Description |
 |---|---|---|
 | Human review | `HumanReviewSubAgent` | Wraps any `SubAgent<String>`; a pluggable `HumanReviewer` approves, edits, requests a revision (bounded by `maxRevisions` + `ExhaustionPolicy`), or rejects (`ReviewRejectedException`). Adds an approval gate to any workflow step. `ConsoleHumanReviewer` is the library's one reviewer — interactive runs only, extensible through protected hooks while `review` itself stays final. The `:example` demo `review` subclasses it, which is why `bootRun` forwards stdin. |
+
+Guardrails is the automated counterpart of human review — a decorator, not a workflow:
+
+| Pattern | Class | Description |
+|---|---|---|
+| Guardrails | `GuardrailedSubAgent` (package `com.ronald.agent.subagent.guardrail`) | Wraps any `SubAgent<String>` with `InputGuardrail`s (checked once against `input` before the delegate runs) and `OutputGuardrail`s (checked against the result, able to ask for a retry bounded by `maxRetries` + `ExhaustionPolicy`, or block via `GuardrailViolationException`). `GuardrailDecision` mirrors `HumanReviewSubAgent`'s `ReviewDecision`: `pass`/`modify`/`retry`/`block` against `approve`/`edit`/`revise`/`reject`. Ships `PiiGuardrail` (regex PII redaction/blocking, usable as both an input and output guardrail) and `MaxLengthGuardrail` (retry-or-block on an over-long output) — both model-free, so `:api` stays provider-agnostic. |
 
 Agents as tools is an adapter, not a workflow:
 

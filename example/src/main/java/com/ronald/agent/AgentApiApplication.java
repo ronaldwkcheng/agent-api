@@ -1,6 +1,7 @@
 package com.ronald.agent;
 
 import com.ronald.agent.example.*;
+import com.ronald.agent.subagent.guardrail.GuardrailViolationException;
 import com.ronald.agent.subagent.review.ReviewRejectedException;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -29,8 +30,8 @@ import java.util.concurrent.Executors;
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
  * {@code iterative}, {@code plan-and-execute}, {@code orchestrator-workers}, {@code react},
- * {@code supervisor}, {@code rag}, {@code memory}, {@code review}. Values are matched
- * exactly, so relaxed binding does not apply — spell them as written.</p>
+ * {@code supervisor}, {@code rag}, {@code memory}, {@code review}, {@code guardrail}. Values are
+ * matched exactly, so relaxed binding does not apply — spell them as written.</p>
  *
  * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
  * second flag. It needs a Chroma running on the host in {@code application.properties}, already
@@ -230,6 +231,23 @@ public class AgentApiApplication {
                 System.out.println(result);
             } catch (ReviewRejectedException e) {
                 System.out.println("\nRun stopped by reviewer: " + e.getMessage());
+            }
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "guardrail")
+    CommandLineRunner guardrailRunner(GuardrailExample service) {
+        return args -> {
+            System.out.println("\n=== GuardrailExample ===");
+            String userComplaint = "I was charged twice for my subscription, call me back at "
+                    + "415-555-1234 or email jane.doe@example.com - I need a refund!";
+            try {
+                String result = service.draftGuardedReply(userComplaint);
+                System.out.println("\n=== Guarded reply ===");
+                System.out.println(result);
+            } catch (GuardrailViolationException e) {
+                System.out.println("\nRun stopped by a guardrail: " + e.getMessage());
             }
         };
     }
