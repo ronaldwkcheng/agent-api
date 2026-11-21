@@ -124,7 +124,7 @@ This project implements seven **agentic workflow patterns** built on top of Spri
 | Parallel | `ParallelAgentOrchestrator<T>` | Agents fan-out concurrently (via `Executor`), results fan-in to an aggregator agent |
 | Conditional | `ConditionalAgentRouter<T>` | An LLM classifier picks a route key; the matching `RoutableSubAgent` handles the request |
 | Iterative | `IterativeRefinementWorkflow` | Generate → Evaluate loop with a private `EvaluatorAgent`; exits on pass or max attempts |
-| Plan & Execute | `PlanAndExecuteWorkflow<T>` | Planner decomposes input into steps; executor runs each step sequentially with accumulated context; synthesizer produces final typed output |
+| Plan & Execute | `PlanAndExecuteWorkflow<T>` | Planner decomposes input into steps; executor runs each step sequentially with accumulated context; synthesizer produces final typed output. `replanMode` (`AFTER_EACH_STEP` / `ON_FAILURE`, default `NONE`) lets the planner be asked again mid-run instead of the plan staying fixed; `maxSteps` then bounds the total steps executed across every plan and replan |
 | Orchestrator-Workers | `OrchestratorWorkersWorkflow<T>` | An orchestrator LLM decomposes input into N subtasks at runtime; a single worker agent runs once per subtask concurrently; synthesizer produces final typed output |
 | Voting / Ensemble | `VotingAgentOrchestrator<T>` | Several candidate invocations (same agent run N times, or distinct agents each run once) answer the same question concurrently; aggregated by majority vote (no model call) or by a typed judge agent |
 | ReAct | `ReActWorkflow` | Thought → Action → Observation loop; tools are registered with Spring AI's `@Tool` annotation |

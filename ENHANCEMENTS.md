@@ -70,10 +70,19 @@ workflow as a Spring AI `ToolCallback` so `ReActWorkflow` can call it as a tool,
 tools without a `ToolContext`, so `conversationId` does not yet reach nested agents.
 
 ### 2.2 `PlanAndExecuteWorkflow`
-- **Re-planning:** run the planner again after each step, or only after a step fails, using the
-  accumulated `stepResults`.
+- **Re-planning** — done. `replanMode(ReplanMode)` adds `AFTER_EACH_STEP` (ask the planner again
+  after every step, using the accumulated `stepResults`) and `ON_FAILURE` (follow the plan as
+  given; ask again, instead of propagating, only when a step throws). `maxSteps` becomes a total
+  budget across every plan and replan together, and a budget that runs out mid-replan is handled
+  like `IterativeRefinementWorkflow`'s unpassed draft — `THROW` carries every result produced so
+  far as the partial result, `RETURN_PARTIAL` synthesizes over them. See
+  [`api/docs/plan-and-execute-workflow.md`](api/docs/plan-and-execute-workflow.md). Open
+  follow-up: **step dependencies** (below) are not built — re-planning only ever runs one step
+  queue at a time, never fans steps out.
 - **Step dependencies:** an optional `dependsOn` per step, so independent steps run in parallel
-  on an `Executor`.
+  on an `Executor`. Not built this round — it would need either a second, isolated `Step`/`Plan`
+  pair (to avoid silently widening the default planner's structured-output schema for every
+  existing caller) or an accepted behaviour change to the shared one.
 
 ### 2.3 `ConditionalAgentRouter`
 - **Confidence threshold:** a route below the threshold falls back to `defaultAgent`.
@@ -104,7 +113,8 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 3. ~~**1.5 Guardrails.**~~ Done.
 4. ~~**1.2 Voting / Ensemble.**~~ Done.
 5. ~~**1.7 Corrective / Agentic RAG.**~~ Done.
-6. Then pick based on need: 2.2 / 1.6.
+6. ~~**2.2 `PlanAndExecuteWorkflow` re-planning.**~~ Done (step dependencies left open).
+7. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
 
 Per `CLAUDE.md`, each new pattern needs:
 - stub-`SubAgent` tests that need no API key or network,

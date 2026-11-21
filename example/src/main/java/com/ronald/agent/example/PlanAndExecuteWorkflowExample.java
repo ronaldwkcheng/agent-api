@@ -34,7 +34,39 @@ public class PlanAndExecuteWorkflowExample {
      */
     public String research(String topic) {
 
-        DefaultPromptSubAgent stepExecutor = DefaultPromptSubAgent.builder()
+        AgenticWorkflow<String> workflow = PlanAndExecuteWorkflow.<String>builder()
+                .chatClient(chatClient)
+                .stepExecutor(stepExecutor())
+                .synthesizer(synthesizer())
+                .maxSteps(6)
+                .build();
+
+        return workflow.invoke(topic);
+    }
+
+    /**
+     * Same research task, but the planner is asked again after every step instead of following
+     * one fixed plan — useful when later steps should be able to react to what earlier ones
+     * actually found, rather than to a plan written before any research happened.
+     *
+     * @param topic the research topic or question to investigate
+     * @return a structured final report synthesized from all executed steps
+     */
+    public String researchWithReplanning(String topic) {
+
+        AgenticWorkflow<String> workflow = PlanAndExecuteWorkflow.<String>builder()
+                .chatClient(chatClient)
+                .stepExecutor(stepExecutor())
+                .synthesizer(synthesizer())
+                .replanMode(PlanAndExecuteWorkflow.ReplanMode.AFTER_EACH_STEP)
+                .maxSteps(6)
+                .build();
+
+        return workflow.invoke(topic);
+    }
+
+    private DefaultPromptSubAgent stepExecutor() {
+        return DefaultPromptSubAgent.builder()
                 .chatClient(chatClient)
                 .outputKey("stepResult")
                 .systemPrompt("""
@@ -56,8 +88,10 @@ public class PlanAndExecuteWorkflowExample {
                         Execute this step thoroughly and provide a detailed, well-structured response.
                         """)
                 .build();
+    }
 
-        DefaultPromptSubAgent synthesizer = DefaultPromptSubAgent.builder()
+    private DefaultPromptSubAgent synthesizer() {
+        return DefaultPromptSubAgent.builder()
                 .chatClient(chatClient)
                 .systemPrompt("""
                         You are an expert analyst producing a final research report.
@@ -77,14 +111,5 @@ public class PlanAndExecuteWorkflowExample {
                         and a concise summary.
                         """)
                 .build();
-
-        AgenticWorkflow<String> workflow = PlanAndExecuteWorkflow.<String>builder()
-                .chatClient(chatClient)
-                .stepExecutor(stepExecutor)
-                .synthesizer(synthesizer)
-                .maxSteps(6)
-                .build();
-
-        return workflow.invoke(topic);
     }
 }

@@ -6,7 +6,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 
+import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,23 @@ import java.util.Objects;
  *   <li><b>Synthesize</b> — a typed synthesizer {@link SubAgent} combines the accumulated
  *       step results into the final output of type {@code T}</li>
  * </ol>
+ *
+ * <p>By default ({@link ReplanMode#NONE}) the plan from phase 1 is fixed: every step executes in
+ * the order the planner first gave. {@link Builder#replanMode(ReplanMode) replanMode} relaxes
+ * that:</p>
+ * <ul>
+ *   <li>{@link ReplanMode#AFTER_EACH_STEP} — after every step completes, the planner is asked
+ *       again, given every result so far, for what should happen next. An empty response means
+ *       the task is already done.</li>
+ *   <li>{@link ReplanMode#ON_FAILURE} — the original plan runs as given; only when a step throws
+ *       is the planner asked again, given every result so far including the failure, for how to
+ *       proceed. The failed step still contributes a {@code FAILED - ...} result rather than
+ *       aborting the workflow.</li>
+ * </ul>
+ *
+ * <p>Either mode still honours {@code maxSteps} as a total budget across every plan and replan,
+ * and {@code exhaustionPolicy} for what happens if that budget runs out before the task is judged
+ * done — see {@link #invoke(String, Map)}.</p>
  *
  * <p>Context keys passed to the step executor on each iteration:</p>
  * <ul>
@@ -84,11 +103,42 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
             Task: {input}
             """;
 
+    private static final String DEFAULT_REPLAN_PROMPT_TEMPLATE = """
+            You are an expert task planner continuing a task that is already in progress.
+
+            Original task: {input}
+
+            Steps completed so far, and their results:
+            {stepResults}
+
+            Decide what should happen next:
+            - If the task is already fully accomplished by the results above, respond with an
+              empty list of steps.
+            - Otherwise, give the next step or steps still needed, in order.
+
+            Produce at most {maxSteps} further steps.
+            """;
+
+    /**
+     * How {@link #invoke(String, Map)} decides whether to keep following the original plan or
+     * ask the planner again partway through execution.
+     */
+    public enum ReplanMode {
+        /** The plan from phase 1 is fixed; every step runs in the order first planned. */
+        NONE,
+        /** The planner is asked again after every step, given the results so far. */
+        AFTER_EACH_STEP,
+        /** The plan runs as given; the planner is asked again only when a step throws. */
+        ON_FAILURE
+    }
+
     private final PlannerAgent     plannerAgent;
+    private final PlannerAgent     replanAgent;
     private final SubAgent<String> stepExecutor;
     private final SubAgent<T>      synthesizer;
     private final int              maxSteps;
     private final ExhaustionPolicy exhaustionPolicy;
+    private final ReplanMode       replanMode;
 
     /**
      * Private constructor — use {@link #builder()} instead.
@@ -97,10 +147,12 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
      */
     private PlanAndExecuteWorkflow(Builder<T> builder) {
         this.plannerAgent     = new PlannerAgent(builder.chatClient, builder.plannerPromptTemplate);
+        this.replanAgent      = new PlannerAgent(builder.chatClient, builder.replanPromptTemplate);
         this.stepExecutor     = builder.stepExecutor;
         this.synthesizer      = builder.synthesizer;
         this.maxSteps         = builder.maxSteps;
         this.exhaustionPolicy = builder.exhaustionPolicy;
+        this.replanMode       = builder.replanMode;
     }
 
     /**
@@ -121,13 +173,21 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
      * passed forward. Finally, the synthesizer combines all step results into the
      * typed return value.</p>
      *
+     * <p>Under {@link ReplanMode#NONE} (the default) that first plan is exactly what runs.
+     * {@link ReplanMode#AFTER_EACH_STEP} and {@link ReplanMode#ON_FAILURE} can extend it mid-run —
+     * see the class documentation — but {@code maxSteps} always remains the total budget across
+     * every plan and replan combined, and exhausting it is handled exactly like an over-long
+     * initial plan: {@code THROW} (the default) carries every result produced so far as the
+     * partial result, {@code RETURN_PARTIAL} synthesizes over them instead.</p>
+     *
      * @param input the user task description
      * @return the synthesized result of type {@code T}
      * @throws NullPointerException       if {@code input} is null
      * @throws IllegalStateException      if the planner produces an empty plan
-     * @throws WorkflowExhaustedException if the plan needs more than {@code maxSteps} steps and
-     *                                    the policy is {@link ExhaustionPolicy#THROW}; the full
-     *                                    plan that could not be executed is available via
+     * @throws WorkflowExhaustedException if the task is not judged done within {@code maxSteps}
+     *                                    total step executions and the policy is
+     *                                    {@link ExhaustionPolicy#THROW}; every result produced so
+     *                                    far is available via
      *                                    {@link WorkflowExhaustedException#getPartialResult()}
      */
     @Override
@@ -165,17 +225,25 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
                     plannedSteps.size(), maxSteps, plannedSteps.size() - maxSteps, maxSteps);
         }
 
-        List<Step> steps = plannedSteps.stream().limit(maxSteps).toList();
-        String formattedPlan = formatPlan(steps);
-        log.debug("plan_created steps={}", steps.size());
+        List<Step> initialSteps = plannedSteps.stream().limit(maxSteps).toList();
+        String formattedPlan = formatPlan(initialSteps);
+        Deque<Step> queue = new ArrayDeque<>(initialSteps);
+        log.debug("plan_created steps={} replanMode={}", queue.size(), replanMode);
 
-        // ── Phase 2: Execute ─────────────────────────────────────────────────
+        // ── Phase 2: Execute (with optional re-planning) ─────────────────────
         StringBuilder previousResults = new StringBuilder();
         StringBuilder allStepResults  = new StringBuilder();
+        int executedCount = 0;
+        boolean exhausted = false;
 
-        for (int i = 0; i < steps.size(); i++) {
-            Step   step   = steps.get(i);
-            String stepId = String.valueOf(i + 1);
+        while (!queue.isEmpty()) {
+            if (executedCount >= maxSteps) {
+                exhausted = true;
+                break;
+            }
+
+            Step   step   = queue.pollFirst();
+            String stepId = String.valueOf(executedCount + 1);
             log.debug("plan_execute_step stepId={} description=\"{}\"", stepId, step.description());
 
             Map<String, String> stepContext = seeded(attributes, Map.of(
@@ -185,13 +253,63 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
                     CTX_STEP_DESCRIPTION, step.description(),
                     CTX_PREVIOUS_RESULTS, previousResults.toString()));
 
-            String result = stepExecutor.execute(stepContext);
-            log.debug("plan_step_complete stepId={}", stepId);
+            String  result;
+            boolean failed = false;
+            if (replanMode == ReplanMode.ON_FAILURE) {
+                try {
+                    result = stepExecutor.execute(stepContext);
+                } catch (RuntimeException e) {
+                    String reason = e.getClass().getSimpleName()
+                            + (e.getMessage() != null ? ": " + e.getMessage() : "");
+                    log.warn("plan_step_failed stepId={} reason={} policy=ON_FAILURE — replanning",
+                            stepId, reason);
+                    result = "FAILED - " + reason;
+                    failed = true;
+                }
+            } else {
+                result = stepExecutor.execute(stepContext);
+            }
+            executedCount++;
+            log.debug("plan_step_complete stepId={} failed={}", stepId, failed);
 
             previousResults.append("Step ").append(stepId).append(": ").append(result).append("\n\n");
             allStepResults.append("Step ").append(stepId)
                           .append(" — ").append(step.description()).append(":\n")
                           .append(result).append("\n\n");
+
+            boolean shouldReplan = replanMode == ReplanMode.AFTER_EACH_STEP
+                    || (replanMode == ReplanMode.ON_FAILURE && failed);
+            if (shouldReplan) {
+                queue.clear();
+
+                // Always ask, even exactly at the budget boundary: the answer decides whether
+                // the loop ends because the task is done or because the budget ran out with real
+                // work still pending — skipping the question would have to guess which.
+                Map<String, String> replanContext = seeded(attributes, Map.of(
+                        CTX_INPUT,        input,
+                        CTX_STEP_RESULTS, allStepResults.toString(),
+                        "maxSteps",       String.valueOf(maxSteps - executedCount)));
+
+                Plan replan = replanAgent.execute(replanContext);
+                if (replan != null && replan.steps() != null && !replan.steps().isEmpty()) {
+                    queue.addAll(replan.steps());
+                    log.debug("plan_replanned afterStepId={} newSteps={}", stepId, queue.size());
+                } else {
+                    log.debug("plan_replanned afterStepId={} — planner reports the task done", stepId);
+                }
+            }
+        }
+
+        if (exhausted) {
+            if (exhaustionPolicy == ExhaustionPolicy.THROW) {
+                log.error("plan_and_execute_exhausted executed={} maxSteps={} policy=THROW",
+                        executedCount, maxSteps);
+                throw new WorkflowExhaustedException(
+                        "The task was not judged done within " + maxSteps + " total step executions",
+                        maxSteps, allStepResults.toString());
+            }
+            log.warn("plan_and_execute_exhausted executed={} maxSteps={} policy=RETURN_PARTIAL — "
+                    + "synthesizing over the results produced so far", executedCount, maxSteps);
         }
 
         // ── Phase 3: Synthesize ──────────────────────────────────────────────
@@ -298,7 +416,9 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
         private SubAgent<T>        synthesizer;
         private int                maxSteps             = 10;
         private String             plannerPromptTemplate = DEFAULT_PLANNER_PROMPT_TEMPLATE;
+        private String             replanPromptTemplate  = DEFAULT_REPLAN_PROMPT_TEMPLATE;
         private ExhaustionPolicy   exhaustionPolicy      = ExhaustionPolicy.THROW;
+        private ReplanMode        replanMode            = ReplanMode.NONE;
 
         private Builder() {}
 
@@ -375,6 +495,33 @@ public class PlanAndExecuteWorkflow<T> implements AgenticWorkflow<T> {
          */
         public Builder<T> plannerPromptTemplate(String plannerPromptTemplate) {
             this.plannerPromptTemplate = plannerPromptTemplate;
+            return this;
+        }
+
+        /**
+         * Sets whether, and when, the planner is asked again partway through execution.
+         * Defaults to {@link ReplanMode#NONE} — the first plan is fixed.
+         *
+         * @param replanMode the re-planning mode
+         * @return this builder
+         * @throws NullPointerException if replanMode is null
+         */
+        public Builder<T> replanMode(ReplanMode replanMode) {
+            this.replanMode = Objects.requireNonNull(replanMode, "replanMode must not be null");
+            return this;
+        }
+
+        /**
+         * Overrides the default replan prompt template, used only when {@link #replanMode} is
+         * not {@link ReplanMode#NONE}. The template must contain the {@code {input}},
+         * {@code {stepResults}} and {@code {maxSteps}} placeholders — {@code {maxSteps}} here
+         * renders as the <em>remaining</em> budget, not the original total.
+         *
+         * @param replanPromptTemplate the custom replan prompt template
+         * @return this builder
+         */
+        public Builder<T> replanPromptTemplate(String replanPromptTemplate) {
+            this.replanPromptTemplate = replanPromptTemplate;
             return this;
         }
 
