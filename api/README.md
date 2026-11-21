@@ -12,7 +12,7 @@ implementations.
 | [Parallel orchestrator](docs/parallel-agent-orchestrator.md) | `ParallelAgentOrchestrator<T>` | fan-out ⇉ fan-in ⇉ aggregate |
 | [Conditional router](docs/conditional-agent-router.md) | `ConditionalAgentRouter<T>` | classify → dispatch → fallback |
 | [Iterative refinement](docs/iterative-refinement-workflow.md) | `IterativeRefinementWorkflow` | refine ⇄ evaluate, until PASS |
-| [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize |
+| [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize, optionally replanning mid-run |
 | [Orchestrator-workers](docs/orchestrator-workers-workflow.md) | `OrchestratorWorkersWorkflow<T>` | orchestrate ⇉ work (runtime fan-out) ⇉ synthesize |
 | [Voting / ensemble](docs/voting-agent-orchestrator.md) | `VotingAgentOrchestrator<T>` | fan-out (same question) ⇉ vote or judge |
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |

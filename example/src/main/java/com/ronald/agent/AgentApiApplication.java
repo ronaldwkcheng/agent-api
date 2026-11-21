@@ -166,10 +166,13 @@ public class AgentApiApplication {
     @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "plan-and-execute")
     CommandLineRunner planAndExecuteRunner(PlanAndExecuteWorkflowExample service) {
         return args -> {
-            System.out.println("\n=== PlanAndExecuteWorkflowExample result ===");
             String topic = "The impact of artificial intelligence on the future of software engineering";
-            String result = service.research(topic);
-            System.out.println(result);
+
+            System.out.println("\n=== PlanAndExecuteWorkflowExample result (fixed plan) ===");
+            System.out.println(service.research(topic));
+
+            System.out.println("\n=== PlanAndExecuteWorkflowExample result (replanned after every step) ===");
+            System.out.println(service.researchWithReplanning(topic));
         };
     }
 
