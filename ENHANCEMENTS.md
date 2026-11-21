@@ -13,7 +13,7 @@ class with tests and a guide in `api/docs/`), **L** (a new abstraction).
 |---|---|---|---|
 | 1.1 | **Orchestrator–Workers** (fan-out decided at runtime) — done | `ParallelAgentOrchestrator` fans out to agents fixed at build time. `PlanAndExecuteWorkflow` runs its steps one after another. Neither lets an LLM split the input into N subtasks at runtime and run them in parallel. | M |
 | 1.2 | **Voting / Ensemble** — done | Run the *same* agent N times (or across models), then pick by majority vote or a judge agent. The parallel workflow only fans out to *different* agents. | S–M |
-| 1.3 | **Supervisor / Hierarchical** | A supervisor LLM keeps choosing which sub-agent to call next until it decides it is done. `ConditionalAgentRouter` routes only once. | M (S after 2.1) |
+| 1.3 | **Supervisor / Hierarchical** — done | A supervisor LLM keeps choosing which sub-agent to call next until it decides it is done. `ConditionalAgentRouter` routes only once. | M (S after 2.1) |
 | 1.4 | **Handoff / Swarm** | Agents pass control to each other peer to peer over one shared context, with a cap on the number of handoffs, honouring `ExhaustionPolicy`. | M |
 | 1.5 | **Guardrails** (decorator) — done | Input and output checks around any `SubAgent`, such as PII, schema or policy checks. It is the automated version of `HumanReviewSubAgent` and could reuse the `ReviewDecision` shape. | S–M |
 | 1.6 | **Graph / State-machine workflow** | Named nodes plus conditional edges, with cycles allowed. This generalises all six current patterns (LangGraph-style). | L |
@@ -48,6 +48,15 @@ to the first-seen group, no further model call — requires `T` = `String`) or `
 (every distinct candidate, annotated with how many samples agreed, handed to a typed judge agent).
 Open follow-up: no semantic/embedding-based clustering for the vote, only exact (normalized) text
 match — documented as a gotcha favoring `judge(...)` for free-form text.
+
+1.3 needed no new class — exactly as 2.1 predicted, it is free once `AgentToolCallback` exists.
+A `ReActWorkflow` registered with agent-wrapped tools (via `AgentToolCallback.builder().subAgent(...)`
+or `.workflow(...)`) *is* the supervisor: its thought → action → observation loop keeps choosing
+which tool (i.e. which sub-agent or nested workflow) to call next, bounded by `maxSteps` and
+`ExhaustionPolicy`, until it decides it has a final answer. See `SupervisorExample` in `:example`
+(demo: `supervisor`) and the worked example in
+[`api/docs/agent-tool-callback.md`](api/docs/agent-tool-callback.md) — no separate guide, since
+both pieces it composes are already fully documented on their own.
 
 1.7 is built as `CorrectiveRagWorkflow` (`com.ronald.agent.subagent.rag`); see
 [`api/docs/corrective-rag-workflow.md`](api/docs/corrective-rag-workflow.md). It wraps a
@@ -89,9 +98,19 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 - **Multi-route (top-k) dispatch:** send the request to several routes and feed their results to
   an aggregator.
 
-### 2.4 `ParallelAgentOrchestrator`
-- **Quorum policy** next to `BranchFailurePolicy`: succeed once K of N branches return, and
-  optionally cancel the rest.
+### 2.4 `ParallelAgentOrchestrator` — done
+- **Quorum policy** next to `BranchFailurePolicy`: `quorum(int)` (default: every branch) lets the
+  workflow proceed to aggregation once that many branches have settled — succeeded, degraded, or
+  timed out — without waiting on the rest, which contribute an `UNAVAILABLE - quorum was reached
+  ...` placeholder instead. Requires `BranchFailurePolicy.DEGRADE` below the full branch count:
+  `FAIL_FAST` must still propagate every failure, which stopping early cannot guarantee. See
+  [`api/docs/parallel-agent-orchestrator.md`](api/docs/parallel-agent-orchestrator.md). Open
+  follow-up: **"optionally cancel the rest"**, from the original gap, is not built — this
+  workflow takes a plain `Executor`, not an `ExecutorService`, and `CompletableFuture.cancel()`
+  cannot interrupt a branch already running regardless of executor type, so there is nothing a
+  cancel option could do beyond what simply not waiting already achieves. Stragglers keep running
+  to completion and their result is discarded, exactly like a branch that outlives
+  `branchTimeout`.
 
 ### 2.5 `IterativeRefinementWorkflow`
 - **Self-reflection mode:** the generator critiques its own draft, so no separate evaluator is
@@ -108,13 +127,14 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 
 ## 3. Suggested order
 
-1. ~~**2.1 ToolCallback adapter.**~~ Done; it opens up 1.3.
+1. ~~**2.1 ToolCallback adapter.**~~ Done; it opens up 1.3 (also done — see above, no new class needed).
 2. ~~**1.1 Orchestrator–Workers.**~~ Done.
 3. ~~**1.5 Guardrails.**~~ Done.
 4. ~~**1.2 Voting / Ensemble.**~~ Done.
 5. ~~**1.7 Corrective / Agentic RAG.**~~ Done.
 6. ~~**2.2 `PlanAndExecuteWorkflow` re-planning.**~~ Done (step dependencies left open).
-7. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
+7. ~~**2.4 `ParallelAgentOrchestrator` quorum.**~~ Done (cancellation not applicable — see above).
+8. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
 
 Per `CLAUDE.md`, each new pattern needs:
 - stub-`SubAgent` tests that need no API key or network,

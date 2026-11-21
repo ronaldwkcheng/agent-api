@@ -9,7 +9,7 @@ implementations.
 | Guide | Class | Shape |
 |---|---|---|
 | [Sequential chain](docs/sequential-agent-chain.md) | `SequentialAgentChain<T>` | A → B → C, one shared context |
-| [Parallel orchestrator](docs/parallel-agent-orchestrator.md) | `ParallelAgentOrchestrator<T>` | fan-out ⇉ fan-in ⇉ aggregate |
+| [Parallel orchestrator](docs/parallel-agent-orchestrator.md) | `ParallelAgentOrchestrator<T>` | fan-out ⇉ fan-in (optionally stopping at a quorum) ⇉ aggregate |
 | [Conditional router](docs/conditional-agent-router.md) | `ConditionalAgentRouter<T>` | classify → dispatch → fallback |
 | [Iterative refinement](docs/iterative-refinement-workflow.md) | `IterativeRefinementWorkflow` | refine ⇄ evaluate, until PASS |
 | [Plan & execute](docs/plan-and-execute-workflow.md) | `PlanAndExecuteWorkflow<T>` | plan → run each step → synthesize, optionally replanning mid-run |

@@ -119,9 +119,12 @@ public class AgentApiApplication {
     CommandLineRunner parallelRunner(ParallelWorkflowExample service) {
         return args -> {
             String input = "I love the new features in your product, but sometimes it crashes unexpectedly. Also, I found a bug in the latest update.";
-            String result = service.analysis(input);
-            System.out.println("\n=== ParallelWorkflowExample result ===");
-            System.out.println(result);
+
+            System.out.println("\n=== ParallelWorkflowExample result (wait for all) ===");
+            System.out.println(service.analysis(input));
+
+            System.out.println("\n=== ParallelWorkflowExample result (quorum of 2 of 3) ===");
+            System.out.println(service.analysisWithQuorum(input));
         };
     }
 

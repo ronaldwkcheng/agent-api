@@ -121,7 +121,7 @@ This project implements seven **agentic workflow patterns** built on top of Spri
 | Pattern | Class | Description |
 |---|---|---|
 | Sequential | `SequentialAgentChain<T>` | Agents run one after another; each agent's output is added to a shared context map for downstream agents |
-| Parallel | `ParallelAgentOrchestrator<T>` | Agents fan-out concurrently (via `Executor`), results fan-in to an aggregator agent |
+| Parallel | `ParallelAgentOrchestrator<T>` | Agents fan-out concurrently (via `Executor`), results fan-in to an aggregator agent. `quorum` (default: every branch) lets the workflow proceed once that many branches have settled, without waiting for the rest; requires `BranchFailurePolicy.DEGRADE` below the full branch count |
 | Conditional | `ConditionalAgentRouter<T>` | An LLM classifier picks a route key; the matching `RoutableSubAgent` handles the request |
 | Iterative | `IterativeRefinementWorkflow` | Generate → Evaluate loop with a private `EvaluatorAgent`; exits on pass or max attempts |
 | Plan & Execute | `PlanAndExecuteWorkflow<T>` | Planner decomposes input into steps; executor runs each step sequentially with accumulated context; synthesizer produces final typed output. `replanMode` (`AFTER_EACH_STEP` / `ON_FAILURE`, default `NONE`) lets the planner be asked again mid-run instead of the plan staying fixed; `maxSteps` then bounds the total steps executed across every plan and replan |
