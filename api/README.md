@@ -27,7 +27,11 @@ pattern reads and writes, a full implementation walkthrough, and the failure mod
 
 `RagSubAgent` is the odd one out: an *agent* rather than an orchestration, it implements both
 `SubAgent<String>` and `AgenticWorkflow<String>`, so it answers on its own or serves as one step
-of any of the six.
+of any of the six. Retrieval itself has two optional extensions, both disabled by default: a
+per-call `filterExpression` context key narrows every search to Spring AI's declarative metadata
+filter syntax, and `queryRewriter(ChatClient)` turns one search into multi-query — the question is
+expanded into several search queries, each searched in turn (no `Executor`, unlike the fan-out
+workflows below), and the results merged by best score and capped back to `topK`.
 
 `CorrectiveRagWorkflow` wraps a `RagSubAgent` with a grade-and-retry loop: a grader judges whether
 the retrieved passages can answer the question, and if not, a rewriter drafts a better query and
