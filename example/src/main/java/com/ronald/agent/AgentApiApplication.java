@@ -30,21 +30,23 @@ import java.util.concurrent.Executors;
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
  * {@code iterative}, {@code plan-and-execute}, {@code orchestrator-workers}, {@code voting},
- * {@code react}, {@code supervisor}, {@code rag}, {@code memory}, {@code review},
- * {@code guardrail}. Values are matched exactly, so relaxed binding does not apply — spell them
- * as written.</p>
+ * {@code react}, {@code supervisor}, {@code rag}, {@code corrective-rag}, {@code memory},
+ * {@code review}, {@code guardrail}. Values are matched exactly, so relaxed binding does not
+ * apply — spell them as written.</p>
  *
- * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
- * second flag. It needs a Chroma running on the host in {@code application.properties}, already
- * populated by the ingestion app at {@code E:\dev\spring_ai_workspace\chroma-doc}, and Chroma's
- * autoconfiguration switched on for the run:</p>
+ * <p>{@code rag} and {@code corrective-rag} are the demos with a prerequisite beyond the API key,
+ * and the ones that take a second flag. Both need a Chroma running on the host in
+ * {@code application.properties}, already populated by the ingestion app at
+ * {@code E:\dev\spring_ai_workspace\chroma-doc}, and Chroma's autoconfiguration switched on for
+ * the run:</p>
  *
  * <pre>{@code
  * ./gradlew bootRun --args='--agent.demo=rag --spring.ai.vectorstore.type=chroma'
+ * ./gradlew bootRun --args='--agent.demo=corrective-rag --spring.ai.vectorstore.type=chroma'
  * }</pre>
  *
- * <p>See {@link RagSubAgentExample} and the vector-store block in
- * {@code application.properties}.</p>
+ * <p>See {@link RagSubAgentExample}, {@link CorrectiveRagWorkflowExample}, and the vector-store
+ * block in {@code application.properties}.</p>
  */
 @SpringBootApplication
 public class AgentApiApplication {
@@ -335,6 +337,42 @@ public class AgentApiApplication {
             System.out.println("Question: " + question);
             System.out.println("Retrieved:");
             System.out.println(service.explainRetrieval(question));
+            System.out.println("\nAnswer:");
+            System.out.println(service.answer(question));
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "corrective-rag")
+    CommandLineRunner correctiveRagRunner(CorrectiveRagWorkflowExample service, RagSubAgentExample ragService) {
+        return args -> {
+            System.out.println("\n=== CorrectiveRagWorkflowExample result ===");
+
+            // Same Chroma prerequisite as the plain rag demo — see ragRunner above.
+            if (!ragService.hasVectorStore()) {
+                System.out.println("No VectorStore was wired for this run, so there is nothing to "
+                        + "retrieve from.\n"
+                        + "\nChroma's autoconfiguration is off by default - it connects during "
+                        + "startup, which would make every build need a running Chroma. Add the "
+                        + "flag:\n"
+                        + "  ./gradlew bootRun --args='--agent.demo=corrective-rag "
+                        + "--spring.ai.vectorstore.type=chroma'");
+                return;
+            }
+            if (ragService.documentCount() == 0) {
+                System.out.println("Chroma collection '" + ragService.collectionName()
+                        + "' holds no documents, so there is nothing to retrieve.\n"
+                        + "\nIngestion lives in the companion project, not here:\n"
+                        + "  1. cd E:\\dev\\spring_ai_workspace\\chroma-doc\n"
+                        + "  2. docker compose up -d          (Chroma on localhost:8000)\n"
+                        + "  3. ./gradlew bootRun             (ingestion app on localhost:8080)\n"
+                        + "  4. curl -X POST \"http://localhost:8080/api/ingestion?path=<your-docs>\"\n"
+                        + "\nThen run this demo again.");
+                return;
+            }
+
+            String question = "Summarize the documents";
+            System.out.println("Question: " + question);
             System.out.println("\nAnswer:");
             System.out.println(service.answer(question));
         };

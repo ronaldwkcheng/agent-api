@@ -143,6 +143,16 @@ public class RagSubAgentExample {
     }
 
     /**
+     * The agent built at startup, for another demo in this package to reuse rather than
+     * re-resolving the same Chroma wiring — {@link CorrectiveRagWorkflowExample}, notably.
+     *
+     * @return the built agent, or {@code null} if no vector store was wired for this run
+     */
+    RagSubAgent ragSubAgentOrNull() {
+        return ragAgent;
+    }
+
+    /**
      * Answers a question from the documents in Chroma.
      *
      * @param question the question to answer

@@ -17,7 +17,7 @@ class with tests and a guide in `api/docs/`), **L** (a new abstraction).
 | 1.4 | **Handoff / Swarm** | Agents pass control to each other peer to peer over one shared context, with a cap on the number of handoffs, honouring `ExhaustionPolicy`. | M |
 | 1.5 | **Guardrails** (decorator) — done | Input and output checks around any `SubAgent`, such as PII, schema or policy checks. It is the automated version of `HumanReviewSubAgent` and could reuse the `ReviewDecision` shape. | S–M |
 | 1.6 | **Graph / State-machine workflow** | Named nodes plus conditional edges, with cycles allowed. This generalises all six current patterns (LangGraph-style). | L |
-| 1.7 | **Corrective / Agentic RAG** | Grade the retrieved documents, then rewrite the query and search again if they are poor. Today `RagSubAgent` retrieves once. | M |
+| 1.7 | **Corrective / Agentic RAG** — done | Grade the retrieved documents, then rewrite the query and search again if they are poor. Today `RagSubAgent` retrieves once. | M |
 
 Built as `OrchestratorWorkersWorkflow<T>` (`com.ronald.agent.workflow`); see
 [`api/docs/orchestrator-workers-workflow.md`](api/docs/orchestrator-workers-workflow.md). An
@@ -48,6 +48,17 @@ to the first-seen group, no further model call — requires `T` = `String`) or `
 (every distinct candidate, annotated with how many samples agreed, handed to a typed judge agent).
 Open follow-up: no semantic/embedding-based clustering for the vote, only exact (normalized) text
 match — documented as a gotcha favoring `judge(...)` for free-form text.
+
+1.7 is built as `CorrectiveRagWorkflow` (`com.ronald.agent.subagent.rag`); see
+[`api/docs/corrective-rag-workflow.md`](api/docs/corrective-rag-workflow.md). It wraps a
+`RagSubAgent` with a grade-and-retry loop: an internal grader reads the question and the
+formatted passages and grades them `SUFFICIENT` or `INSUFFICIENT`; on `INSUFFICIENT` an internal
+rewriter drafts a better search query and retrieval runs again, bounded by `maxAttempts` and the
+`ExhaustionPolicy` convention. Empty retrieval is graded `INSUFFICIENT` without a model call,
+mirroring `RagSubAgent`'s own no-documents short-circuit, and the final answer always reuses the
+last attempt's already-retrieved passages via a new `RagSubAgent.generate(Map, List<Document>)`
+method rather than searching again. Open follow-up: the grader judges the whole retrieved set at
+once, not passage-by-passage.
 
 ## 2. Small extensions to existing classes
 
@@ -92,7 +103,8 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 2. ~~**1.1 Orchestrator–Workers.**~~ Done.
 3. ~~**1.5 Guardrails.**~~ Done.
 4. ~~**1.2 Voting / Ensemble.**~~ Done.
-5. Then pick based on need: 2.2 / 1.7 / 1.6.
+5. ~~**1.7 Corrective / Agentic RAG.**~~ Done.
+6. Then pick based on need: 2.2 / 1.6.
 
 Per `CLAUDE.md`, each new pattern needs:
 - stub-`SubAgent` tests that need no API key or network,

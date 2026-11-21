@@ -86,8 +86,8 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `orchestrator-workers`, `voting`, `react`, `supervisor`, `rag`, `memory`,
-`review`, or `guardrail`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `orchestrator-workers`, `voting`, `react`, `supervisor`, `rag`,
+`corrective-rag`, `memory`, `review`, or `guardrail`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -129,11 +129,12 @@ This project implements seven **agentic workflow patterns** built on top of Spri
 | Voting / Ensemble | `VotingAgentOrchestrator<T>` | Several candidate invocations (same agent run N times, or distinct agents each run once) answer the same question concurrently; aggregated by majority vote (no model call) or by a typed judge agent |
 | ReAct | `ReActWorkflow` | Thought → Action → Observation loop; tools are registered with Spring AI's `@Tool` annotation |
 
-Alongside them, one retrieval agent:
+Alongside them, retrieval agents (package `com.ronald.agent.subagent.rag`):
 
 | Pattern | Class | Description |
 |---|---|---|
-| RAG | `RagSubAgent` | Semantic-searches a `VectorStore`, renders the passages into the prompt, returns the grounded answer. Implements **both** `SubAgent<String>` and `AgenticWorkflow<String>`, so it works standalone via `invoke` and as a step inside any of the six. Empty retrieval short-circuits to `noDocumentsAnswer` without an LLM call. |
+| RAG | `RagSubAgent` | Semantic-searches a `VectorStore`, renders the passages into the prompt, returns the grounded answer. Implements **both** `SubAgent<String>` and `AgenticWorkflow<String>`, so it works standalone via `invoke` and as a step inside any of the six. Empty retrieval short-circuits to `noDocumentsAnswer` without an LLM call. Retrieval and generation are also exposed separately as `retrieve(String)` and `generate(Map, List<Document>)`. |
+| Corrective RAG | `CorrectiveRagWorkflow` | Wraps a `RagSubAgent` with a grade-and-retry loop: an internal grader judges the retrieved passages `SUFFICIENT`/`INSUFFICIENT`, and on `INSUFFICIENT` an internal rewriter drafts a better query and retrieval runs again, bounded by `maxAttempts` + `ExhaustionPolicy`. Empty retrieval is graded `INSUFFICIENT` without a model call, mirroring `RagSubAgent`'s own no-documents short-circuit. Demo: `corrective-rag`. |
 
 Human-in-the-loop is a decorator, not a workflow:
 
@@ -164,6 +165,7 @@ Workflows pass state through a `Map<String, String>`. Key names are workflow-spe
 - `"scratchpad"` — accumulated thought/action/observation history (ReActWorkflow)
 - `"criteria"`, `"content"`, `"feedback"` — refinement loop state (IterativeRefinementWorkflow)
 - `"documents"` — formatted retrieved passages, written by `RagSubAgent` before its prompt renders
+- `"query"`, `"feedback"` — corrective-RAG retry state: the current attempt's search query and the grader's explanation of what was missing (`CorrectiveRagWorkflow`)
 - `"reviewFeedback"`, `"previousDraft"` — human review state, passed only to the agent `HumanReviewSubAgent` wraps; empty strings on the first attempt
 - `"guardrailFeedback"`, `"previousOutput"` — guardrail retry state, passed only to the agent `GuardrailSubAgent` wraps; empty strings on the first attempt
 - Custom agent output keys are set via `getOutputKey()` on each `SubAgent`

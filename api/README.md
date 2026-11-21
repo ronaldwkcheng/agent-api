@@ -17,6 +17,7 @@ implementations.
 | [Voting / ensemble](docs/voting-agent-orchestrator.md) | `VotingAgentOrchestrator<T>` | fan-out (same question) ⇉ vote or judge |
 | [ReAct](docs/react-workflow.md) | `ReActWorkflow` | thought → action → observation |
 | [RAG](docs/rag-sub-agent.md) | `RagSubAgent` | retrieve → ground → answer |
+| [Corrective RAG](docs/corrective-rag-workflow.md) | `CorrectiveRagWorkflow` | retrieve → grade → rewrite & retry ⇄ → generate |
 | [Human-in-the-loop](docs/human-review-sub-agent.md) | `HumanReviewSubAgent` | propose → human review → approve / edit / revise / reject |
 | [Guardrails](docs/guardrail-sub-agent.md) | `GuardrailSubAgent` | check input → run → check output → pass / rewrite / retry / block |
 | [Agents as tools](docs/agent-tool-callback.md) | `AgentToolCallback` | wrap any agent or workflow as a `ToolCallback` |
@@ -27,6 +28,11 @@ pattern reads and writes, a full implementation walkthrough, and the failure mod
 `RagSubAgent` is the odd one out: an *agent* rather than an orchestration, it implements both
 `SubAgent<String>` and `AgenticWorkflow<String>`, so it answers on its own or serves as one step
 of any of the six.
+
+`CorrectiveRagWorkflow` wraps a `RagSubAgent` with a grade-and-retry loop: a grader judges whether
+the retrieved passages can answer the question, and if not, a rewriter drafts a better query and
+the workflow retrieves again, up to `maxAttempts` times, before generating. It honours the same
+`ExhaustionPolicy` convention as the bounded workflows below.
 
 `HumanReviewSubAgent` is a decorator rather than a pattern: it wraps any `SubAgent<String>` and
 holds its output for a person to approve, edit, send back for revision, or reject. Because it is a
@@ -198,6 +204,7 @@ Workflows thread state through a `Map<String, String>`. Keys are per-pattern, bu
 | `tools`, `scratchpad` | Tool descriptions and the reasoning trace. | ReAct |
 | `sampleIndex`, `sampleCount` | This sample's 1-based position and the total sample count. | `VotingAgentOrchestrator` |
 | `candidates` | Every distinct surviving candidate, annotated with how many samples agreed. Judge mode only. | `VotingAgentOrchestrator` |
+| `query`, `feedback` | The current attempt's search query, and the grader's explanation of what was missing. | `CorrectiveRagWorkflow` |
 | `reviewFeedback`, `previousDraft` | Human review state, seen only by the wrapped agent. Empty on the first attempt. | `HumanReviewSubAgent` |
 | `guardrailFeedback`, `previousOutput` | Guardrail retry state, seen only by the wrapped agent. Empty on the first attempt. | `GuardrailSubAgent` |
 | `conversationId` | **Reserved.** Scopes chat memory to one conversation via advisor customizer. Never overwritten by any workflow. Pass it through `invoke(input, attributes)`. | all |
@@ -207,8 +214,9 @@ Workflows thread state through a `Map<String, String>`. Keys are per-pattern, bu
 
 ## Exhaustion: what bounded workflows do when they run out
 
-`ReActWorkflow`, `IterativeRefinementWorkflow` and `PlanAndExecuteWorkflow` are bounded by a step
-or attempt budget. All three share one convention, so you learn it once:
+`ReActWorkflow`, `IterativeRefinementWorkflow`, `PlanAndExecuteWorkflow`,
+`OrchestratorWorkersWorkflow` and `CorrectiveRagWorkflow` are bounded by a step or attempt budget.
+All of them share one convention, so you learn it once:
 
 ```mermaid
 flowchart LR
