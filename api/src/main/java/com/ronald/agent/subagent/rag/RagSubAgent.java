@@ -52,6 +52,12 @@ import java.util.Objects;
  * {@link VectorStore} interface alone, so the application chooses Chroma, pgvector, Redis or
  * anything else, exactly as it chooses the model provider.</p>
  *
+ * <p>Retrieval and generation are also exposed as two separate steps — {@link #retrieve(String)}
+ * and {@link #generate(Map, List)} — for a caller that needs to act on the retrieved set before
+ * deciding whether, or over what, to generate. {@link CorrectiveRagWorkflow} is built on exactly
+ * this: it grades the retrieved passages and retries with a rewritten query before ever calling
+ * {@code generate}.</p>
+ *
  * <p>Example:</p>
  * <pre>{@code
  * RagSubAgent agent = RagSubAgent.builder()
@@ -174,6 +180,29 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
         if (documents.isEmpty()) {
             log.warn("rag_no_documents query=\"{}\" topK={} threshold={} — returning the "
                     + "no-documents answer without calling the model", query, topK, similarityThreshold);
+        }
+        return generate(context, documents);
+    }
+
+    /**
+     * Generates an answer by rendering the given, already-retrieved passages into the prompt —
+     * skipping retrieval entirely.
+     *
+     * <p>Exposed for callers that have their own reason to hold a retrieved set before generating
+     * over it, such as a workflow that grades passages before deciding whether to answer from
+     * them. An empty list is treated exactly like empty retrieval in {@link #execute(Map)}:
+     * {@code noDocumentsAnswer} is returned without a model call.</p>
+     *
+     * @param context   the context the prompt template renders against; must contain whatever
+     *                  the template needs, e.g. {@code input} for the default template
+     * @param documents the passages to generate over, closest first; may be empty
+     * @return the grounded answer, or {@code noDocumentsAnswer} if {@code documents} is empty
+     * @throws NullPointerException if {@code context} or {@code documents} is null
+     */
+    public String generate(Map<String, String> context, List<Document> documents) {
+        Objects.requireNonNull(context, "context must not be null");
+        Objects.requireNonNull(documents, "documents must not be null");
+        if (documents.isEmpty()) {
             return noDocumentsAnswer;
         }
 

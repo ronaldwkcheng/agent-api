@@ -61,6 +61,7 @@ classDiagram
         +invoke(String, Map) String
         +execute(Map) String
         +retrieve(String) List~Document~
+        +generate(Map, List) String
         #formatDocuments(List) String
         +builder() Builder
     }
@@ -218,6 +219,20 @@ whether the corpus can answer at all, without paying for a generation to find ou
 List<Document> passages = agent.retrieve(question);   // no LLM call
 ```
 
+### 5. Or generate over passages you already hold
+
+`generate(Map, List<Document>)` is the other half of that split: it skips retrieval and renders
+the given passages straight into the prompt. A caller that graded, filtered, or otherwise acted on
+a retrieved set before deciding whether to answer from it uses this instead of `execute`, so the
+search is never repeated for the same query. [`CorrectiveRagWorkflow`](corrective-rag-workflow.md)
+is built on exactly this.
+
+```java
+List<Document> passages = agent.retrieve(question);
+// ... grade, filter, whatever the caller needs to do first ...
+String answer = agent.generate(Map.of(RagSubAgent.CTX_INPUT, question), passages);
+```
+
 ---
 
 ## The prompt contract
@@ -312,4 +327,6 @@ distinguishable.
 
 **Retrieval is one shot.** The question you were given is the question that gets embedded — there
 is no query rewriting, no HyDE, no multi-hop. A question phrased unlike the corpus retrieves
-poorly. Rewrite the query upstream (a `SequentialAgentChain` step is enough) if that bites.
+poorly. Rewrite the query upstream (a `SequentialAgentChain` step is enough) if that bites, or
+reach for [`CorrectiveRagWorkflow`](corrective-rag-workflow.md), which grades what came back and
+retries with a rewritten query before generating.
