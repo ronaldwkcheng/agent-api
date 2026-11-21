@@ -345,6 +345,10 @@ public class AgentApiApplication {
             System.out.println(service.explainRetrieval(question));
             System.out.println("\nAnswer:");
             System.out.println(service.answer(question));
+
+            System.out.println("\nAnswer (multi-query — the question expanded into several "
+                    + "search queries before retrieving):");
+            System.out.println(service.answerWithMultiQuery(question));
         };
     }
 

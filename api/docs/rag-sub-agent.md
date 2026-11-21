@@ -58,13 +58,29 @@ classDiagram
         -String queryKey
         -String outputKey
         -String noDocumentsAnswer
+        -QueryRewriterAgent queryRewriterAgent
         +invoke(String, Map) String
         +execute(Map) String
         +retrieve(String) List~Document~
+        +retrieve(String, String) List~Document~
         +generate(Map, List) String
         #formatDocuments(List) String
         +builder() Builder
     }
+
+    class QueryVariants {
+        <<record>>
+        +List~String~ queries
+    }
+
+    class QueryRewriterAgent {
+        <<private>>
+        +getOutputKey() String
+        +getPromptTemplate() String
+    }
+
+    RagSubAgent *-- "0..1" QueryRewriterAgent
+    QueryRewriterAgent ..> QueryVariants
 
     class VectorStore {
         <<interface>>
@@ -92,10 +108,17 @@ sequenceDiagram
 
     rect rgb(238, 245, 255)
     note right of A: Retrieve
-    A->>V: similaritySearch(query, topK, threshold)
-    V->>E: embed(query)
-    E-->>V: query vector
-    V-->>A: List~Document~ (closest first)
+    opt queryRewriter configured
+        A->>L: rewrite question into up to queryVariants queries
+        L-->>A: QueryVariants
+    end
+    loop once per query (one, unless rewritten)
+        A->>V: similaritySearch(query, topK, threshold, filterExpression)
+        V->>E: embed(query)
+        E-->>V: query vector
+        V-->>A: List~Document~ (closest first)
+    end
+    note right of A: merge by best score, sort, cap to topK<br/>(no-op when there was only one query)
     end
 
     alt nothing retrieved
@@ -122,6 +145,7 @@ returns `noDocumentsAnswer` instead and logs at `WARN`.
 | Key | Direction | Value | Constant |
 |---|---|---|---|
 | `input` | read | The question. Renamed via `queryKey(...)`. | `CTX_INPUT` |
+| `filterExpression` | read | Optional declarative metadata filter, read before every search. Absent or blank means no filter. | `CTX_FILTER_EXPRESSION` |
 | `documents` | **written** | The formatted passage block, added before the prompt renders. | `CTX_DOCUMENTS` |
 | `output` | published | The answer, under `getOutputKey()`. Renamed via `outputKey(...)`. | `DEFAULT_OUTPUT_KEY` |
 
@@ -233,6 +257,49 @@ List<Document> passages = agent.retrieve(question);
 String answer = agent.generate(Map.of(RagSubAgent.CTX_INPUT, question), passages);
 ```
 
+### 6. Narrow the search with a metadata filter
+
+Pass a declarative, SQL-like filter under `filterExpression` — Spring AI's portable filter
+syntax, parsed by `SearchRequest.Builder.filterExpression(String)` — and every search for that
+call is constrained to it:
+
+```java
+String answer = agent.execute(Map.of(
+        RagSubAgent.CTX_INPUT, "How do I configure retries?",
+        RagSubAgent.CTX_FILTER_EXPRESSION, "source == 'retry.md'"));
+
+// or, with retrieve(...) directly:
+List<Document> passages = agent.retrieve("How do I configure retries?", "source == 'retry.md'");
+```
+
+Absent or blank applies no filter — exactly like not setting the key at all, or calling the
+one-argument `retrieve(String)`. The filter is per-call, not baked into the builder, since the
+same agent instance is typically reused across callers who each need a different scope (their own
+tenant, document set, or date range).
+
+### 7. Expand the question into several search queries
+
+By default the question is searched for verbatim — "retrieval is one shot" (see the gotcha
+below). `queryRewriter(ChatClient)` changes that: an internal agent rewrites the question into up
+to `queryVariants` search queries, every one is searched, and the results are merged —
+deduplicated by document id (keeping the best score seen), sorted by score, and capped to `topK`
+overall, so the prompt cost stays the same as a single search regardless of how many queries ran.
+
+```java
+RagSubAgent agent = RagSubAgent.builder()
+        .chatClient(chatClient)
+        .vectorStore(vectorStore)
+        .queryRewriter(chatClient)   // enables multi-query; reuses the same ChatClient
+        .queryVariants(3)            // default
+        .build();
+
+String answer = agent.invoke("How do I configure retries?");
+```
+
+Worth it when a single phrasing of the question is a coin flip against the corpus's own
+vocabulary — a broad or ambiguous question benefits most. A narrow, already-specific question
+mostly just costs one extra model call for a rewrite that comes back as itself.
+
 ---
 
 ## The prompt contract
@@ -269,6 +336,9 @@ is what `retrieve(...)` is for.
 | `noDocumentsAnswer(String)` | `"(no relevant passages found)"` | Returned *instead of* calling the model. |
 | `promptTemplate(String)` | built-in | Optional. Should contain `{documents}` and the `queryKey` placeholder. |
 | `systemPrompt(String)` | `null` | |
+| `queryRewriter(ChatClient)` | `null` (disabled) | Enables multi-query retrieval; backs the internal rewriter agent. |
+| `queryVariants(int)` | `3` | Max search queries the rewriter may produce. Unused unless `queryRewriter` is set. |
+| `queryRewriterPromptTemplate(String)` | built-in | Should contain `{input}` and `{queryVariants}`. Unused unless `queryRewriter` is set. |
 
 ### Validation
 
@@ -280,6 +350,7 @@ is what `retrieve(...)` is for.
 | Blank `queryKey` | `IllegalArgumentException` — "queryKey must not be blank" |
 | `topK < 1` | `IllegalArgumentException` |
 | `similarityThreshold` outside 0.0–1.0 | `IllegalArgumentException` |
+| `queryVariants < 1` | `IllegalArgumentException` |
 
 ---
 
@@ -294,6 +365,9 @@ is what `retrieve(...)` is for.
 | Store unreachable | Propagates out of `invoke`; the run ends |
 | Embedding model rejects the query | Propagates from inside `similaritySearch` |
 | Retrieved passages are irrelevant | **Not** an error — the model is told to say the passages do not answer the question |
+| `queryRewriter` configured, its model call throws | Propagates out of `retrieve`/`invoke`; no fallback to the raw question for an actual failure, only for an empty or missing response |
+| `queryRewriter` returns an empty or null `QueryVariants` | **Not** an error — falls back to searching the original question once, logged at `WARN` |
+| Blank or malformed `filterExpression` | Blank: treated as no filter. Malformed: propagates from Spring AI's `FilterExpressionTextParser` |
 
 There is one budget here and it is not a step count: this pattern makes exactly one embedding
 call and at most one chat call per question, so it has nothing to exhaust and no
@@ -325,8 +399,23 @@ When wiring this up, check the collection is populated first; `:example` calls
 `RagSubAgentExample.documentCount()` before asking anything, precisely so the two cases are
 distinguishable.
 
-**Retrieval is one shot.** The question you were given is the question that gets embedded — there
-is no query rewriting, no HyDE, no multi-hop. A question phrased unlike the corpus retrieves
-poorly. Rewrite the query upstream (a `SequentialAgentChain` step is enough) if that bites, or
-reach for [`CorrectiveRagWorkflow`](corrective-rag-workflow.md), which grades what came back and
-retries with a rewritten query before generating.
+**Retrieval is one shot — unless `queryRewriter` is configured.** Without it, the question you
+were given is the only thing that gets embedded: no multi-hop, no grading, no retry. A question
+phrased unlike the corpus retrieves poorly. `queryRewriter` fixes the "phrased unlike the corpus"
+case by searching several rewordings up front; it does not read what came back and decide to try
+again. For that — grade the retrieved passages, and only rewrite and retry if they are
+poor — reach for [`CorrectiveRagWorkflow`](corrective-rag-workflow.md) instead, which wraps a
+`RagSubAgent` for exactly this. The two compose: a `RagSubAgent` with `queryRewriter` configured
+can itself be wrapped in a `CorrectiveRagWorkflow`, at the cost of potentially paying for both
+query-expansion strategies on the same question.
+
+**Multi-query is one rewrite call, not one per variant.** `queryVariants` bounds how many search
+queries come back, not how many model calls are made — the rewriter is asked once for "up to N
+queries," and the similarity searches that follow are plain vector-store calls, not billable chat
+calls. The cost that scales with `queryVariants` is the number of `similaritySearch` calls, which
+is usually cheap, not the number of LLM calls, which stays at one per question either way.
+
+**A metadata filter is only as good as the store's metadata.** `filterExpression` is validated by
+Spring AI's parser for syntax, not against what the store actually indexed. A filter naming a
+field no document has, or a value nothing matches, behaves exactly like an over-narrow
+`similarityThreshold`: it quietly returns nothing rather than failing loudly.

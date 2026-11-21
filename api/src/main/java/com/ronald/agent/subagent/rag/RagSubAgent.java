@@ -6,12 +6,15 @@ import com.ronald.agent.subagent.SubAgent;
 import com.ronald.agent.workflow.AgenticWorkflow;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -43,10 +46,19 @@ import java.util.Objects;
  * <ul>
  *   <li>{@code input} — the question to retrieve for, read from {@link Builder#queryKey queryKey}
  *       (which names this key by default)</li>
+ *   <li>{@code filterExpression} — optional: a declarative, SQL-like metadata filter (Spring AI's
+ *       portable filter syntax), read before every search; absent or blank means no filter</li>
  *   <li>{@code documents} — <em>written</em> by this agent: the formatted passages, visible to
  *       the prompt template</li>
  *   <li>{@code output} — the grounded answer, under {@link Builder#outputKey outputKey}</li>
  * </ul>
+ *
+ * <p>By default the question is searched for verbatim. Configuring
+ * {@link Builder#queryRewriter(ChatClient) queryRewriter} turns retrieval into multi-query: an
+ * internal agent rewrites the question into up to {@link Builder#queryVariants queryVariants}
+ * search queries, every one is searched, and the results are merged — deduplicated by document
+ * id (keeping the best score seen), sorted by score, and capped to {@code topK} overall, so the
+ * prompt cost stays the same as a single search regardless of how many queries ran.</p>
  *
  * <p>This class names no vector store implementation. It compiles against the
  * {@link VectorStore} interface alone, so the application chooses Chroma, pgvector, Redis or
@@ -77,6 +89,8 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
     public static final String CTX_INPUT     = "input";
     /** Context key this agent writes the formatted passages to before rendering the prompt. */
     public static final String CTX_DOCUMENTS = "documents";
+    /** Optional context key for a declarative metadata filter, read before every search. */
+    public static final String CTX_FILTER_EXPRESSION = "filterExpression";
     /** Default context key the grounded answer is published under. */
     public static final String DEFAULT_OUTPUT_KEY = "output";
 
@@ -92,6 +106,9 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
      * threshold depends on the embedding model and the corpus.
      */
     public static final double DEFAULT_SIMILARITY_THRESHOLD = SearchRequest.SIMILARITY_THRESHOLD_ACCEPT_ALL;
+
+    /** Default number of search queries a configured {@code queryRewriter} may produce. */
+    public static final int DEFAULT_QUERY_VARIANTS = 3;
 
     private static final String DEFAULT_RAG_PROMPT_TEMPLATE = """
             You are a question-answering assistant. Answer the question using only the reference
@@ -110,14 +127,34 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
             Answer:
             """;
 
-    private final VectorStore vectorStore;
-    private final int         topK;
-    private final double      similarityThreshold;
-    private final String      queryKey;
-    private final String      outputKey;
-    private final String      noDocumentsAnswer;
-    private final String      promptTemplate;
-    private final String      systemPrompt;
+    private static final String DEFAULT_QUERY_REWRITER_PROMPT_TEMPLATE = """
+            You are rewriting a question into effective search queries for a vector similarity
+            search.
+
+            Question: {input}
+
+            Write between 1 and {queryVariants} search queries that, together, are likely to
+            retrieve the passages needed to answer the question. Prefer several queries with
+            different phrasing or focus when the question is broad or ambiguous; one query is
+            enough when it is already specific.
+            """;
+
+    /**
+     * Structured output of the internal query-rewriter agent.
+     *
+     * @param queries one or more search queries to run instead of the raw question
+     */
+    public record QueryVariants(List<String> queries) {}
+
+    private final VectorStore        vectorStore;
+    private final int                topK;
+    private final double             similarityThreshold;
+    private final String             queryKey;
+    private final String             outputKey;
+    private final String             noDocumentsAnswer;
+    private final String             promptTemplate;
+    private final String             systemPrompt;
+    private final QueryRewriterAgent queryRewriterAgent;
 
     private RagSubAgent(Builder builder) {
         super(builder.getChatClient(), String.class, builder.getAdvisorCustomizer());
@@ -131,6 +168,10 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
                 ? builder.getPromptTemplate()
                 : DEFAULT_RAG_PROMPT_TEMPLATE;
         this.systemPrompt        = builder.getSystemPrompt();
+        this.queryRewriterAgent  = builder.queryRewriterChatClient != null
+                ? new QueryRewriterAgent(builder.queryRewriterChatClient, builder.queryVariants,
+                        builder.queryRewriterPromptTemplate)
+                : null;
     }
 
     /**
@@ -176,7 +217,7 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
         String query = Objects.requireNonNull(context.get(queryKey),
                 () -> "context must contain the question under the key \"" + queryKey + "\"");
 
-        List<Document> documents = retrieve(query);
+        List<Document> documents = retrieve(query, context.get(CTX_FILTER_EXPRESSION));
         if (documents.isEmpty()) {
             log.warn("rag_no_documents query=\"{}\" topK={} threshold={} — returning the "
                     + "no-documents answer without calling the model", query, topK, similarityThreshold);
@@ -212,7 +253,8 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
     }
 
     /**
-     * Runs the semantic search alone, without generating an answer.
+     * Runs the semantic search alone, without generating an answer, and without a metadata
+     * filter.
      *
      * <p>Exposed because the retrieved set is what makes a RAG answer explainable: callers that
      * need to show sources, or to judge whether the corpus can answer at all, should not have to
@@ -223,22 +265,99 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
      * @throws NullPointerException if {@code query} is null
      */
     public List<Document> retrieve(String query) {
+        return retrieve(query, null);
+    }
+
+    /**
+     * Runs the semantic search alone, without generating an answer.
+     *
+     * <p>Without a configured {@link Builder#queryRewriter(ChatClient) queryRewriter}, this is
+     * one search for {@code query} verbatim. With one, {@code query} is first rewritten into up
+     * to {@link Builder#queryVariants queryVariants} search queries; every one is searched and
+     * the results are merged — deduplicated by document id (keeping the best score seen), sorted
+     * by score, and capped to {@code topK} overall.</p>
+     *
+     * @param query            the question to search for; must not be null
+     * @param filterExpression a declarative, SQL-like metadata filter, or {@code null} (or blank)
+     *                         for none — see Spring AI's {@code SearchRequest.filterExpression(String)}
+     * @return the matching documents, closest first; never null, possibly empty
+     * @throws NullPointerException if {@code query} is null
+     */
+    public List<Document> retrieve(String query, String filterExpression) {
         Objects.requireNonNull(query, "query must not be null");
 
-        SearchRequest request = SearchRequest.builder()
+        if (queryRewriterAgent == null) {
+            return search(query, filterExpression);
+        }
+
+        List<String> queries = expandQuery(query);
+        if (queries.size() == 1) {
+            return search(queries.get(0), filterExpression);
+        }
+
+        List<Document> merged = mergeByBestScore(queries.stream()
+                .map(q -> search(q, filterExpression))
+                .toList());
+        log.debug("rag_multi_query query=\"{}\" variants={} merged={}", query, queries.size(), merged.size());
+        return merged;
+    }
+
+    /** Runs one similarity search, treating a {@code null}/blank filter as none. */
+    private List<Document> search(String query, String filterExpression) {
+        SearchRequest.Builder requestBuilder = SearchRequest.builder()
                 .query(query)
                 .topK(topK)
-                .similarityThreshold(similarityThreshold)
-                .build();
+                .similarityThreshold(similarityThreshold);
+        if (filterExpression != null && !filterExpression.isBlank()) {
+            requestBuilder.filterExpression(filterExpression);
+        }
 
-        List<Document> documents = vectorStore.similaritySearch(request);
+        List<Document> documents = vectorStore.similaritySearch(requestBuilder.build());
         // A VectorStore may return null rather than an empty list; downstream treats "found
         // nothing" one way only.
         documents = documents != null ? documents : List.of();
 
-        log.debug("rag_retrieved query=\"{}\" topK={} threshold={} found={}",
-                query, topK, similarityThreshold, documents.size());
+        log.debug("rag_retrieved query=\"{}\" topK={} threshold={} filter={} found={}",
+                query, topK, similarityThreshold, filterExpression, documents.size());
         return documents;
+    }
+
+    /** Rewrites the question into one or more search queries; fails open to the original. */
+    private List<String> expandQuery(String query) {
+        QueryVariants variants = queryRewriterAgent.execute(Map.of(
+                CTX_INPUT, query,
+                "queryVariants", String.valueOf(queryRewriterAgent.queryVariants)));
+        if (variants == null || variants.queries() == null || variants.queries().isEmpty()) {
+            log.warn("rag_query_rewriter_empty query=\"{}\" — falling back to the original question", query);
+            return List.of(query);
+        }
+        return variants.queries();
+    }
+
+    /**
+     * Merges several searches' results, keeping one copy of each document (its best-scoring
+     * occurrence), sorted by score and capped to {@code topK} — so a multi-query search costs no
+     * more prompt tokens than a single one.
+     */
+    private List<Document> mergeByBestScore(List<List<Document>> perQueryResults) {
+        Map<String, Document> bestById = new LinkedHashMap<>();
+        for (List<Document> documents : perQueryResults) {
+            for (Document document : documents) {
+                Document existing = bestById.get(document.getId());
+                if (existing == null || score(document) > score(existing)) {
+                    bestById.put(document.getId(), document);
+                }
+            }
+        }
+        return bestById.values().stream()
+                .sorted(Comparator.comparingDouble(this::score).reversed())
+                .limit(topK)
+                .toList();
+    }
+
+    private double score(Document document) {
+        Double score = document.getScore();
+        return score != null ? score : 0.0;
     }
 
     /**
@@ -303,6 +422,33 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
     }
 
     // -------------------------------------------------------------------------
+    // Inner class: QueryRewriterAgent
+    // -------------------------------------------------------------------------
+
+    /** Internal agent that expands a question into one or more search queries. */
+    private static class QueryRewriterAgent extends AbstractPromptSubAgent<QueryVariants> {
+
+        private final int    queryVariants;
+        private final String promptTemplate;
+
+        QueryRewriterAgent(ChatClient chatClient, int queryVariants, String promptTemplate) {
+            super(chatClient, QueryVariants.class);
+            this.queryVariants  = queryVariants;
+            this.promptTemplate = promptTemplate;
+        }
+
+        @Override
+        public String getOutputKey() {
+            return "queryVariants";
+        }
+
+        @Override
+        public String getPromptTemplate() {
+            return promptTemplate;
+        }
+    }
+
+    // -------------------------------------------------------------------------
     // Builder
     // -------------------------------------------------------------------------
 
@@ -322,6 +468,9 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
         private String      queryKey            = CTX_INPUT;
         private String      outputKey           = DEFAULT_OUTPUT_KEY;
         private String      noDocumentsAnswer   = DEFAULT_NO_DOCUMENTS_ANSWER;
+        private ChatClient   queryRewriterChatClient;
+        private int          queryVariants               = DEFAULT_QUERY_VARIANTS;
+        private String       queryRewriterPromptTemplate  = DEFAULT_QUERY_REWRITER_PROMPT_TEMPLATE;
 
         private Builder() {}
 
@@ -409,14 +558,55 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
         }
 
         /**
+         * Enables multi-query retrieval: the question is rewritten into one or more search
+         * queries by an internal agent built from this {@link ChatClient}, every one is
+         * searched, and the results are merged. Disabled by default — the raw question alone is
+         * searched, exactly as without this method.
+         *
+         * @param chatClient the chat client backing the internal rewriter agent; {@code null}
+         *                   (the default) disables multi-query retrieval entirely
+         * @return this builder
+         */
+        public Builder queryRewriter(ChatClient chatClient) {
+            this.queryRewriterChatClient = chatClient;
+            return this;
+        }
+
+        /**
+         * Sets the maximum number of search queries the rewriter may produce. Defaults to
+         * {@value #DEFAULT_QUERY_VARIANTS}. Unused unless {@link #queryRewriter(ChatClient)} is
+         * set.
+         *
+         * @param queryVariants the maximum number of queries; must be at least 1
+         * @return this builder
+         */
+        public Builder queryVariants(int queryVariants) {
+            this.queryVariants = queryVariants;
+            return this;
+        }
+
+        /**
+         * Overrides the default query-rewriter prompt template. Unused unless
+         * {@link #queryRewriter(ChatClient)} is set.
+         * The template must contain the {@code {input}} and {@code {queryVariants}} placeholders.
+         *
+         * @param queryRewriterPromptTemplate the custom query-rewriter prompt template
+         * @return this builder
+         */
+        public Builder queryRewriterPromptTemplate(String queryRewriterPromptTemplate) {
+            this.queryRewriterPromptTemplate = queryRewriterPromptTemplate;
+            return this;
+        }
+
+        /**
          * Builds the {@link RagSubAgent}.
          *
          * @return the configured agent
          * @throws NullPointerException     if {@code chatClient}, {@code vectorStore},
          *                                  {@code queryKey} or {@code noDocumentsAnswer} is null
          * @throws IllegalArgumentException if {@code topK} is less than 1, {@code queryKey} is
-         *                                  blank, or {@code similarityThreshold} falls outside
-         *                                  0.0..1.0
+         *                                  blank, {@code similarityThreshold} falls outside
+         *                                  0.0..1.0, or {@code queryVariants} is less than 1
          */
         @Override
         public RagSubAgent build() {
@@ -433,6 +623,9 @@ public class RagSubAgent extends AbstractPromptSubAgent<String> implements Agent
             if (similarityThreshold < 0.0 || similarityThreshold > 1.0) {
                 throw new IllegalArgumentException(
                         "similarityThreshold must be between 0.0 and 1.0, but was " + similarityThreshold);
+            }
+            if (queryVariants < 1) {
+                throw new IllegalArgumentException("queryVariants must be at least 1");
             }
             return new RagSubAgent(this);
         }

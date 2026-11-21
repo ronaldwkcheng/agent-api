@@ -133,7 +133,7 @@ Alongside them, retrieval agents (package `com.ronald.agent.subagent.rag`):
 
 | Pattern | Class | Description |
 |---|---|---|
-| RAG | `RagSubAgent` | Semantic-searches a `VectorStore`, renders the passages into the prompt, returns the grounded answer. Implements **both** `SubAgent<String>` and `AgenticWorkflow<String>`, so it works standalone via `invoke` and as a step inside any of the six. Empty retrieval short-circuits to `noDocumentsAnswer` without an LLM call. Retrieval and generation are also exposed separately as `retrieve(String)` and `generate(Map, List<Document>)`. |
+| RAG | `RagSubAgent` | Semantic-searches a `VectorStore`, renders the passages into the prompt, returns the grounded answer. Implements **both** `SubAgent<String>` and `AgenticWorkflow<String>`, so it works standalone via `invoke` and as a step inside any of the six. Empty retrieval short-circuits to `noDocumentsAnswer` without an LLM call. Retrieval and generation are also exposed separately as `retrieve(String, String)` (query + optional `filterExpression`, a declarative metadata filter) and `generate(Map, List<Document>)`. `queryRewriter(ChatClient)` enables multi-query: an internal agent expands the question into up to `queryVariants` search queries, searched and merged by best score, capped to `topK` — disabled by default (one search, the raw question). |
 | Corrective RAG | `CorrectiveRagWorkflow` | Wraps a `RagSubAgent` with a grade-and-retry loop: an internal grader judges the retrieved passages `SUFFICIENT`/`INSUFFICIENT`, and on `INSUFFICIENT` an internal rewriter drafts a better query and retrieval runs again, bounded by `maxAttempts` + `ExhaustionPolicy`. Empty retrieval is graded `INSUFFICIENT` without a model call, mirroring `RagSubAgent`'s own no-documents short-circuit. Demo: `corrective-rag`. |
 
 Human-in-the-loop is a decorator, not a workflow:
@@ -165,6 +165,7 @@ Workflows pass state through a `Map<String, String>`. Key names are workflow-spe
 - `"scratchpad"` — accumulated thought/action/observation history (ReActWorkflow)
 - `"criteria"`, `"content"`, `"feedback"` — refinement loop state (IterativeRefinementWorkflow)
 - `"documents"` — formatted retrieved passages, written by `RagSubAgent` before its prompt renders
+- `"filterExpression"` — optional declarative metadata filter, read by `RagSubAgent` before every search; absent or blank means no filter
 - `"query"`, `"feedback"` — corrective-RAG retry state: the current attempt's search query and the grader's explanation of what was missing (`CorrectiveRagWorkflow`)
 - `"reviewFeedback"`, `"previousDraft"` — human review state, passed only to the agent `HumanReviewSubAgent` wraps; empty strings on the first attempt
 - `"guardrailFeedback"`, `"previousOutput"` — guardrail retry state, passed only to the agent `GuardrailSubAgent` wraps; empty strings on the first attempt

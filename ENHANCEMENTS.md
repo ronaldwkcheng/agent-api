@@ -117,9 +117,21 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
   needed.
 - **Early stopping** when the evaluation score stops improving.
 
-### 2.6 `RagSubAgent`
-- **Query rewriting / multi-query** before the similarity search.
-- **Metadata filter** expression taken from the context map.
+### 2.6 `RagSubAgent` — done
+- **Query rewriting / multi-query** before the similarity search. `queryRewriter(ChatClient)`
+  (disabled by default — unchanged behaviour: one search, the raw question) expands the question
+  into up to `queryVariants` search queries via an internal agent; every one is searched in turn
+  (no `Executor` — a plain sequential loop) and the results merged, deduplicated by document id
+  keeping the best score seen, sorted, and capped to `topK` overall, so prompt cost never scales
+  with the number of queries. A rewriter response that is empty or null fails open to the
+  original question, logged at `WARN`; an actual model-call failure still propagates.
+- **Metadata filter** expression taken from the context map — done. `CTX_FILTER_EXPRESSION`
+  (`"filterExpression"`), read before every search and passed straight to Spring AI's
+  `SearchRequest.Builder.filterExpression(String)`; absent or blank means no filter. Also exposed
+  directly as a `retrieve(String query, String filterExpression)` overload. See
+  [`api/docs/rag-sub-agent.md`](api/docs/rag-sub-agent.md). Open follow-up: a filter is validated
+  only for syntax, not against what the store actually indexed — an unmatched filter quietly
+  returns nothing, the same failure mode an over-narrow `similarityThreshold` already has.
 
 ### 2.7 Cross-cutting decorators
 - `RetryingSubAgent`: retries transient model errors with backoff.
@@ -134,7 +146,8 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 5. ~~**1.7 Corrective / Agentic RAG.**~~ Done.
 6. ~~**2.2 `PlanAndExecuteWorkflow` re-planning.**~~ Done (step dependencies left open).
 7. ~~**2.4 `ParallelAgentOrchestrator` quorum.**~~ Done (cancellation not applicable — see above).
-8. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
+8. ~~**2.6 `RagSubAgent` query rewriting / multi-query and metadata filter.**~~ Done.
+9. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
 
 Per `CLAUDE.md`, each new pattern needs:
 - stub-`SubAgent` tests that need no API key or network,

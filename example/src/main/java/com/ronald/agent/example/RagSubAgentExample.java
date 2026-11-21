@@ -96,6 +96,7 @@ public class RagSubAgentExample {
 
     private ChromaApi   chromaApi;
     private RagSubAgent ragAgent;
+    private RagSubAgent multiQueryAgent;
 
     /**
      * Resolves the autoconfigured store once and builds the agent over it.
@@ -120,6 +121,15 @@ public class RagSubAgentExample {
                 .vectorStore(vectorStore)
                 .topK(searchProperties.topK())
                 .similarityThreshold(searchProperties.similarityThreshold())
+                .build();
+
+        // Same store and bounds, but the question is first expanded into several search queries.
+        this.multiQueryAgent = RagSubAgent.builder()
+                .chatClient(chatClient)
+                .vectorStore(vectorStore)
+                .topK(searchProperties.topK())
+                .similarityThreshold(searchProperties.similarityThreshold())
+                .queryRewriter(chatClient)
                 .build();
 
         log.info("chroma_vector_store_ready collection={} tenant={} database={} topK={} threshold={}",
@@ -161,6 +171,23 @@ public class RagSubAgentExample {
      */
     public String answer(String question) {
         return ragAgent().invoke(question);
+    }
+
+    /**
+     * Answers a question the same way as {@link #answer(String)}, but the question is first
+     * expanded by {@link RagSubAgent.Builder#queryRewriter(ChatClient)} into several search
+     * queries, and the results merged, instead of searching the raw question once.
+     *
+     * @param question the question to answer
+     * @return the grounded answer, or the agent's no-documents answer if nothing was retrieved
+     * @throws IllegalStateException if no vector store was wired for this run
+     */
+    public String answerWithMultiQuery(String question) {
+        if (multiQueryAgent == null) {
+            throw new IllegalStateException("no VectorStore bean: run with "
+                    + "--spring.ai.vectorstore.type=chroma");
+        }
+        return multiQueryAgent.invoke(question);
     }
 
     /**
