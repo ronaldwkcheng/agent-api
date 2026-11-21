@@ -31,11 +31,14 @@ classDiagram
         -String reportsKey
         -Duration branchTimeout
         -BranchFailurePolicy failurePolicy
+        -int quorum
         +builder()$ Builder~T~
         +invoke(String, Map) T
         -executeBranch(SubAgent, Map) BranchResult
         -withTimeout(CompletableFuture) CompletableFuture
         -recoverBranch(SubAgent, Throwable) BranchResult
+        -awaitQuorum(List)
+        -resultOrQuorumPlaceholder(SubAgent, CompletableFuture) BranchResult
     }
 
     class BranchFailurePolicy {
@@ -58,6 +61,7 @@ classDiagram
         +branchTimeout(Duration) Builder
         +noBranchTimeout() Builder
         +failurePolicy(BranchFailurePolicy) Builder
+        +quorum(int) Builder
         +build() ParallelAgentOrchestrator~T~
         -validateOutputKeys()
     }
@@ -106,7 +110,12 @@ sequenceDiagram
         Note over O: B contributes<br/>"UNAVAILABLE - ...: reason"
     end
 
-    O->>O: allOf(futures).join()
+    alt quorum == branch count (default)
+        O->>O: allOf(futures).join()
+    else quorum < branch count
+        O->>O: awaitQuorum(futures) — stop once quorum have settled
+        Note over O: a branch not yet settled contributes<br/>"UNAVAILABLE - quorum was reached ..."
+    end
     Note over O: fan-in: {input} + one key per branch + {reports}
     O->>Agg: execute(aggregatorContext)
     Agg-->>O: T
@@ -250,6 +259,40 @@ branch would make the aggregate wrong rather than merely thinner — a safety ch
 
 ---
 
+## Quorum
+
+```java
+ParallelAgentOrchestrator.<String>builder()
+        .failurePolicy(BranchFailurePolicy.DEGRADE)
+        .quorum(2)
+        // ... three sub-agents ...
+        .build();
+```
+
+By default `quorum` equals the branch count: the workflow waits for every branch, exactly as
+above. Set it lower and the workflow proceeds to aggregation as soon as that many branches have
+**settled** — succeeded, degraded, or timed out — without waiting on the rest. A branch that has
+not settled by then contributes `UNAVAILABLE - quorum was reached before this branch finished`
+under its own key, so the aggregator still sees every key, the same contract `DEGRADE` already
+guarantees.
+
+A quorum below the branch count **requires `DEGRADE`**. `FAIL_FAST` exists to propagate every
+branch's failure; a quorum that stops watching some branches early cannot keep that promise for
+the ones it stopped watching, so `build()` rejects the combination rather than silently
+weakening `FAIL_FAST`.
+
+**Stragglers are not cancelled.** This workflow takes a plain `Executor`, not an
+`ExecutorService`, and `CompletableFuture.cancel()` cannot interrupt a branch already running
+regardless of the executor type — it can only mark the future itself as done, which does nothing
+to the computation behind it. A branch left behind by quorum simply keeps running to completion
+on the executor, exactly like a branch that outlives `branchTimeout`; its result is computed and
+then discarded, never cancelled, never free.
+
+Use quorum when the aggregator's quality degrades gracefully with one section missing and that
+section is reliably the slow or flaky one — not when every branch is load-bearing.
+
+---
+
 ## Builder reference
 
 | Method | Default | Notes |
@@ -262,6 +305,7 @@ branch would make the aggregate wrong rather than merely thinner — a safety ch
 | `branchTimeout(Duration)` | 60s | Per branch. `ZERO` = unbounded. Negative throws. |
 | `noBranchTimeout()` | — | Shorthand for `branchTimeout(Duration.ZERO)`. |
 | `failurePolicy(BranchFailurePolicy)` | `FAIL_FAST` | |
+| `quorum(int)` | branch count | How many branches to wait for; must be ≥ 1. Below the branch count, requires `DEGRADE`. |
 
 ### Validation
 
@@ -274,6 +318,9 @@ branch would make the aggregate wrong rather than merely thinner — a safety ch
 | A branch `outputKey` is null or blank | `IllegalStateException` naming the agent class |
 | A branch key equals `input` or the reports key | `IllegalStateException` — reserved key |
 | Two branches share a key | `IllegalStateException` — duplicate key |
+| `quorum` exceeds the branch count | `IllegalStateException` |
+| `quorum` below the branch count under `FAIL_FAST` | `IllegalStateException` naming `DEGRADE` as the fix |
+| `quorum(int)` argument itself is less than 1 | `IllegalArgumentException`, at the setter call |
 
 The duplicate check matters more than it looks: fan-in writes into a map, so a collision would
 silently overwrite a completed branch's result with no error at all. Catching it at build time
@@ -313,3 +360,13 @@ aggregator call still runs afterwards. Total ≈ slowest branch + aggregator.
 
 **Every branch sends the full input.** *n* branches means *n* copies of the input in prompt
 tokens. Wide fan-out over a large document gets expensive quickly.
+
+**A quorum straggler is abandoned, not stopped.** Reaching quorum only means the workflow stops
+*waiting* for the remaining branches — they keep running on the executor regardless, and their
+eventual result, if any, is silently discarded. Quorum bounds latency, not spend, exactly like
+`branchTimeout` already does.
+
+**Quorum and timeout answer different questions.** `branchTimeout` bounds how long any *one*
+branch may run; `quorum` bounds how many branches the workflow waits for in total. They compose:
+a slow branch still times out on its own schedule even if the workflow already moved on without
+it because quorum was reached first.

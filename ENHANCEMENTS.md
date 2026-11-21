@@ -89,9 +89,19 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 - **Multi-route (top-k) dispatch:** send the request to several routes and feed their results to
   an aggregator.
 
-### 2.4 `ParallelAgentOrchestrator`
-- **Quorum policy** next to `BranchFailurePolicy`: succeed once K of N branches return, and
-  optionally cancel the rest.
+### 2.4 `ParallelAgentOrchestrator` — done
+- **Quorum policy** next to `BranchFailurePolicy`: `quorum(int)` (default: every branch) lets the
+  workflow proceed to aggregation once that many branches have settled — succeeded, degraded, or
+  timed out — without waiting on the rest, which contribute an `UNAVAILABLE - quorum was reached
+  ...` placeholder instead. Requires `BranchFailurePolicy.DEGRADE` below the full branch count:
+  `FAIL_FAST` must still propagate every failure, which stopping early cannot guarantee. See
+  [`api/docs/parallel-agent-orchestrator.md`](api/docs/parallel-agent-orchestrator.md). Open
+  follow-up: **"optionally cancel the rest"**, from the original gap, is not built — this
+  workflow takes a plain `Executor`, not an `ExecutorService`, and `CompletableFuture.cancel()`
+  cannot interrupt a branch already running regardless of executor type, so there is nothing a
+  cancel option could do beyond what simply not waiting already achieves. Stragglers keep running
+  to completion and their result is discarded, exactly like a branch that outlives
+  `branchTimeout`.
 
 ### 2.5 `IterativeRefinementWorkflow`
 - **Self-reflection mode:** the generator critiques its own draft, so no separate evaluator is
@@ -114,7 +124,8 @@ tools without a `ToolContext`, so `conversationId` does not yet reach nested age
 4. ~~**1.2 Voting / Ensemble.**~~ Done.
 5. ~~**1.7 Corrective / Agentic RAG.**~~ Done.
 6. ~~**2.2 `PlanAndExecuteWorkflow` re-planning.**~~ Done (step dependencies left open).
-7. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
+7. ~~**2.4 `ParallelAgentOrchestrator` quorum.**~~ Done (cancellation not applicable — see above).
+8. Then pick based on need: 1.6, or the step-dependencies half of 2.2.
 
 Per `CLAUDE.md`, each new pattern needs:
 - stub-`SubAgent` tests that need no API key or network,

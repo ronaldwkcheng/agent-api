@@ -10,6 +10,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * An {@link AgenticWorkflow} that executes multiple {@link SubAgent}s concurrently (fan-out),
@@ -21,6 +22,16 @@ import java.util.concurrent.TimeUnit;
  * the workflow indefinitely. By default a failed branch aborts the workflow
  * ({@link BranchFailurePolicy#FAIL_FAST}); configure {@link BranchFailurePolicy#DEGRADE} to
  * aggregate whatever the surviving branches produced instead.</p>
+ *
+ * <p>By default the workflow waits for every branch ({@link Builder#quorum(int) quorum} equal to
+ * the branch count). A lower quorum proceeds to aggregation as soon as that many branches have
+ * settled — succeeded, degraded, or timed out, whichever {@link BranchFailurePolicy#DEGRADE}
+ * turned them into — without waiting for the stragglers. A quorum below the branch count requires
+ * {@code DEGRADE}: {@code FAIL_FAST} must still propagate every branch's failure, which stopping
+ * early cannot guarantee. Stragglers are not cancelled: this workflow takes a plain {@link Executor}
+ * rather than an {@link java.util.concurrent.ExecutorService}, and {@link CompletableFuture#cancel}
+ * cannot interrupt a branch already running regardless — they simply keep running unobserved,
+ * exactly like a branch that outlives its {@link Builder#branchTimeout(Duration) branchTimeout}.</p>
  *
  * <p>Use {@link #builder()} to construct instances.</p>
  *
@@ -51,6 +62,9 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
 
     /** Prefix marking a branch whose result is missing under {@link BranchFailurePolicy#DEGRADE}. */
     private static final String UNAVAILABLE_PREFIX = "UNAVAILABLE - this analysis did not complete: ";
+    /** Prefix marking a branch abandoned once {@link Builder#quorum(int) quorum} was reached. */
+    private static final String QUORUM_PREFIX =
+            "UNAVAILABLE - quorum was reached before this branch finished";
 
     private final List<SubAgent<String>> subAgents;
     private final SubAgent<T> aggregator; // Strongly typed to T
@@ -58,6 +72,7 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
     private final String reportsKey;
     private final Duration branchTimeout;
     private final BranchFailurePolicy failurePolicy;
+    private final int quorum;
 
     /**
      * Private constructor — use {@link #builder()} instead.
@@ -71,6 +86,7 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
         this.reportsKey    = builder.reportsKey;
         this.branchTimeout = builder.branchTimeout;
         this.failurePolicy = builder.failurePolicy;
+        this.quorum        = builder.quorum;
     }
 
     /**
@@ -102,8 +118,8 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
     public T invoke(String input, Map<String, String> attributes) {
         Objects.requireNonNull(input, "input must not be null");
         Objects.requireNonNull(attributes, "attributes must not be null");
-        log.info("fan_out_start subAgents={} inputLength={} timeout={} policy={}",
-                subAgents.size(), input.length(), branchTimeout, failurePolicy);
+        log.info("fan_out_start subAgents={} inputLength={} timeout={} policy={} quorum={}",
+                subAgents.size(), input.length(), branchTimeout, failurePolicy, quorum);
 
         // Seeded from the caller's attributes, then the input. Every branch reads the same
         // immutable snapshot concurrently, so it is copied once here rather than per branch.
@@ -120,9 +136,13 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
                         .handle((result, error) -> error == null ? result : recoverBranch(agent, error)))
                 .toList();
 
-        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        if (quorum < subAgents.size()) {
+            awaitQuorum(futures);
+        } else {
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+        }
 
-        log.info("fan_out_complete subAgents={}", subAgents.size());
+        log.info("fan_out_complete subAgents={} quorum={}", subAgents.size(), quorum);
 
         // ── Fan-in: build aggregator context ─────────────────────────────────
         // Seeded from the caller's attributes too: the aggregator is a request like any other,
@@ -131,8 +151,12 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
         aggregatorContext.put(CTX_INPUT, input);
 
         StringJoiner reportsJoiner = new StringJoiner("\n");
-        for (CompletableFuture<BranchResult> future : futures) {
-            BranchResult result = future.join();
+        for (int i = 0; i < subAgents.size(); i++) {
+            SubAgent<String> agent = subAgents.get(i);
+            CompletableFuture<BranchResult> future = futures.get(i);
+            BranchResult result = quorum < subAgents.size()
+                    ? resultOrQuorumPlaceholder(agent, future)
+                    : future.join();
             aggregatorContext.put(result.outputKey(), result.value());
             reportsJoiner.add(result.outputKey().toUpperCase() + ": " + result.value());
             log.debug("fan_in outputKey={} valueLength={}", result.outputKey(), result.value().length());
@@ -142,6 +166,59 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
         // ── Aggregator ───────────────────────────────────────────────────────
         // Clean, polymorphic execution. No hacky prompt injection!
         return aggregator.execute(Collections.unmodifiableMap(aggregatorContext));
+    }
+
+    /**
+     * Blocks only until {@code quorum} of the given branch futures have settled, then returns —
+     * never waiting on the remaining stragglers, which are left running on the executor.
+     *
+     * <p>Every future here is the post-{@code handle} branch future, which under
+     * {@link BranchFailurePolicy#DEGRADE} (the only policy a sub-quorum is allowed with) always
+     * completes normally, with either a real result or a placeholder — so "settled" and
+     * "completed, successfully or not" are the same thing at this point.</p>
+     *
+     * @param futures every branch's post-handle future, in the same order as {@link #subAgents}
+     */
+    private void awaitQuorum(List<CompletableFuture<BranchResult>> futures) {
+        AtomicInteger settled = new AtomicInteger();
+        CompletableFuture<Void> quorumReached = new CompletableFuture<>();
+
+        for (CompletableFuture<BranchResult> future : futures) {
+            future.whenComplete((result, error) -> {
+                if (settled.incrementAndGet() == quorum) {
+                    quorumReached.complete(null);
+                }
+            });
+        }
+
+        quorumReached.join();
+        log.info("quorum_reached quorum={} totalBranches={}", quorum, futures.size());
+    }
+
+    /**
+     * Reads a branch's result without waiting for it: the real (or degraded) result if it has
+     * already settled, otherwise a quorum placeholder.
+     *
+     * <p>A branch can still be unsettled here even after {@link #awaitQuorum} returns — quorum
+     * only guarantees {@code quorum} branches are done, not which ones, and this one simply may
+     * not have been among them yet.</p>
+     *
+     * @param agent  the sub-agent this future belongs to, for its output key
+     * @param future that branch's post-handle future
+     * @return the branch's result, or a quorum placeholder under its output key
+     */
+    private BranchResult resultOrQuorumPlaceholder(SubAgent<String> agent, CompletableFuture<BranchResult> future) {
+        if (future.isDone()) {
+            try {
+                return future.join();
+            } catch (CompletionException e) {
+                // Not expected: quorum below the branch count requires DEGRADE, under which
+                // handle() already converts every failure into a BranchResult. Guarded anyway.
+                log.warn("quorum_branch_settled_exceptionally outputKey={}", agent.getOutputKey(), e);
+                return new BranchResult(agent.getOutputKey(), QUORUM_PREFIX);
+            }
+        }
+        return new BranchResult(agent.getOutputKey(), QUORUM_PREFIX);
     }
 
     /**
@@ -233,6 +310,7 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
         private String reportsKey = DEFAULT_REPORTS_KEY;
         private Duration branchTimeout = DEFAULT_BRANCH_TIMEOUT;
         private BranchFailurePolicy failurePolicy = BranchFailurePolicy.FAIL_FAST;
+        private Integer quorum;
 
         private Builder() {}
 
@@ -354,17 +432,55 @@ public class ParallelAgentOrchestrator<T> implements AgenticWorkflow<T> {
         }
 
         /**
+         * Sets how many branches must settle before the workflow proceeds to aggregation.
+         * Defaults to every branch (today's behaviour — wait for all).
+         *
+         * <p>Below the branch count, the workflow stops waiting once this many branches have
+         * settled — succeeded, degraded, or timed out — and treats whichever branches have not
+         * yet settled as unavailable for this run. Requires {@link BranchFailurePolicy#DEGRADE}:
+         * see the class documentation for why {@code FAIL_FAST} cannot combine with a quorum
+         * below the branch count.</p>
+         *
+         * @param quorum how many branches to wait for; must be at least 1
+         * @return this Builder
+         * @throws IllegalArgumentException if quorum is less than 1
+         */
+        public Builder<T> quorum(int quorum) {
+            if (quorum < 1) {
+                throw new IllegalArgumentException("quorum must be at least 1");
+            }
+            this.quorum = quorum;
+            return this;
+        }
+
+        /**
          * Builds the ParallelAgentOrchestrator instance with the configured settings.
          *
          * @return the built ParallelAgentOrchestrator
-         * @throws IllegalStateException if no sub-agents are added, aggregator or executor is not set,
-         *                               or if validation fails (e.g., duplicate output keys)
+         * @throws IllegalStateException if no sub-agents are added, aggregator or executor is not
+         *                               set, if validation fails (e.g., duplicate output keys),
+         *                               if {@code quorum} exceeds the number of branches, or if
+         *                               {@code quorum} is below the branch count under
+         *                               {@link BranchFailurePolicy#FAIL_FAST}
          */
         public ParallelAgentOrchestrator<T> build() {
             if (subAgents.isEmpty()) throw new IllegalStateException("SubAgents required.");
             Objects.requireNonNull(aggregator, "Aggregator required.");
             Objects.requireNonNull(executor, "Executor required.");
             validateOutputKeys();
+
+            int effectiveQuorum = quorum != null ? quorum : subAgents.size();
+            if (effectiveQuorum > subAgents.size()) {
+                throw new IllegalStateException("quorum (" + effectiveQuorum
+                        + ") cannot exceed the number of branches (" + subAgents.size() + ")");
+            }
+            if (effectiveQuorum < subAgents.size() && failurePolicy != BranchFailurePolicy.DEGRADE) {
+                throw new IllegalStateException("quorum (" + effectiveQuorum + ") below the branch count ("
+                        + subAgents.size() + ") requires BranchFailurePolicy.DEGRADE; FAIL_FAST must still "
+                        + "propagate every branch's failure, which stopping early cannot guarantee.");
+            }
+            this.quorum = effectiveQuorum;
+
             return new ParallelAgentOrchestrator<>(this);
         }
 

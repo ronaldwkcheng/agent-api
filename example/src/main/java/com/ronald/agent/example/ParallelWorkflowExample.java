@@ -38,7 +38,43 @@ public class ParallelWorkflowExample {
      */
     public String analysis(String text) {
 
-        DefaultPromptSubAgent safetyAgent = DefaultPromptSubAgent.builder()
+        AgenticWorkflow<String> workflow = ParallelAgentOrchestrator.<String>builder()
+                .addSubAgent(sentimentAgent())     // → {sentiment}
+                .addSubAgent(safetyAgent())        // → {safety}
+                .addSubAgent(translationAgent())   // → {translation}
+                .aggregator(aggregatorAgent())     // reads {input}, {sentiment}, {safety}, {translation}, {reports}
+                .executor(executor)
+                .build();
+
+        return workflow.invoke(text);
+    }
+
+    /**
+     * Same three-way analysis, but the summary proceeds as soon as two of the three specialists
+     * have reported back, rather than waiting on all three — useful when one analysis (here,
+     * translation) is a nice-to-have rather than something the summary cannot proceed without.
+     *
+     * @param text the input text to analyse
+     * @return a bullet-point executive summary, possibly missing the translation note if it was
+     *         still running when quorum was reached
+     */
+    public String analysisWithQuorum(String text) {
+
+        AgenticWorkflow<String> workflow = ParallelAgentOrchestrator.<String>builder()
+                .addSubAgent(sentimentAgent())
+                .addSubAgent(safetyAgent())
+                .addSubAgent(translationAgent())
+                .aggregator(aggregatorAgent())
+                .executor(executor)
+                .failurePolicy(ParallelAgentOrchestrator.BranchFailurePolicy.DEGRADE)
+                .quorum(2)
+                .build();
+
+        return workflow.invoke(text);
+    }
+
+    private DefaultPromptSubAgent safetyAgent() {
+        return DefaultPromptSubAgent.builder()
                 .chatClient(chatClient)
                 .outputKey("safety")
                 .systemPrompt("You are a content safety auditor. Be concise and flag any concerns clearly.")
@@ -48,8 +84,10 @@ public class ParallelWorkflowExample {
                          Text: {input}
                         """)
                 .build();
+    }
 
-        DefaultPromptSubAgent sentimentAgent = DefaultPromptSubAgent.builder()
+    private DefaultPromptSubAgent sentimentAgent() {
+        return DefaultPromptSubAgent.builder()
                 .chatClient(chatClient)
                 .outputKey("sentiment")
                 .systemPrompt("You are a sentiment analyzer. Be concise and focus on the overall sentiment.")
@@ -58,15 +96,19 @@ public class ParallelWorkflowExample {
                          Text: {input}
                         """)
                 .build();
+    }
 
-        DefaultPromptSubAgent translationAgent = DefaultPromptSubAgent.builder()
+    private DefaultPromptSubAgent translationAgent() {
+        return DefaultPromptSubAgent.builder()
                 .chatClient(chatClient)
                 .outputKey("translation")
                 .systemPrompt("You are a translation expert. Translate the input text to French.")
                 .promptTemplate("Translate the following text into French, preserving tone and nuance: {input}")
                 .build();
+    }
 
-        DefaultPromptSubAgent aggregatorAgent = DefaultPromptSubAgent.builder()
+    private DefaultPromptSubAgent aggregatorAgent() {
+        return DefaultPromptSubAgent.builder()
                 .chatClient(chatClient)
                 // no outputKey — anonymous final step
                 .systemPrompt("""
@@ -77,25 +119,15 @@ public class ParallelWorkflowExample {
                 .promptTemplate("""
                         Original Text:
                         {input}
-                        
+
                         Specialist Reports:
                         {reports}
-                        
+
                         Produce a final cohesive Analytics Report in bullet-point form covering:
                         - Overall sentiment and emotional tone
                         - Safety classification and any warnings
                         - French translation quality note
                         """)
                 .build();
-
-        AgenticWorkflow<String> workflow = ParallelAgentOrchestrator.<String>builder()
-                .addSubAgent(sentimentAgent)     // → {sentiment}
-                .addSubAgent(safetyAgent)        // → {safety}
-                .addSubAgent(translationAgent)   // → {translation}
-                .aggregator(aggregatorAgent)     // reads {input}, {sentiment}, {safety}, {translation}, {reports}
-                .executor(executor)
-                .build();
-
-        return workflow.invoke(text);
     }
 }
