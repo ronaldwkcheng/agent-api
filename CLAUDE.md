@@ -86,7 +86,8 @@ with "no `ReactiveWebServerFactory` bean defined in the context".
 
 Each workflow pattern has a demo `CommandLineRunner` in `AgentApiApplication`, registered only
 when `agent.demo` selects it: `sequential`, `parallel`, `conditional`, `iterative`,
-`plan-and-execute`, `orchestrator-workers`, `react`, `supervisor`, `rag`, `memory`, `review`, or `guardrail`. Values are matched exactly. Without the property no runner is
+`plan-and-execute`, `orchestrator-workers`, `voting`, `react`, `supervisor`, `rag`, `memory`,
+`review`, or `guardrail`. Values are matched exactly. Without the property no runner is
 registered, which is what keeps `./gradlew build` free and offline — `@SpringBootTest` calls
 `SpringApplication.run()` and would otherwise execute a runner on every build.
 
@@ -115,7 +116,7 @@ This project implements seven **agentic workflow patterns** built on top of Spri
 - **`SubAgent<T>`** — executes a single LLM step given a `Map<String, String>` context; returns a typed result.
 - **`RoutableSubAgent<T>`** — extends `SubAgent` with a `getRouteKey()` for use in conditional routing.
 
-### The Seven Workflow Patterns
+### The Eight Workflow Patterns
 
 | Pattern | Class | Description |
 |---|---|---|
@@ -125,6 +126,7 @@ This project implements seven **agentic workflow patterns** built on top of Spri
 | Iterative | `IterativeRefinementWorkflow` | Generate → Evaluate loop with a private `EvaluatorAgent`; exits on pass or max attempts |
 | Plan & Execute | `PlanAndExecuteWorkflow<T>` | Planner decomposes input into steps; executor runs each step sequentially with accumulated context; synthesizer produces final typed output |
 | Orchestrator-Workers | `OrchestratorWorkersWorkflow<T>` | An orchestrator LLM decomposes input into N subtasks at runtime; a single worker agent runs once per subtask concurrently; synthesizer produces final typed output |
+| Voting / Ensemble | `VotingAgentOrchestrator<T>` | Several candidate invocations (same agent run N times, or distinct agents each run once) answer the same question concurrently; aggregated by majority vote (no model call) or by a typed judge agent |
 | ReAct | `ReActWorkflow` | Thought → Action → Observation loop; tools are registered with Spring AI's `@Tool` annotation |
 
 Alongside them, one retrieval agent:

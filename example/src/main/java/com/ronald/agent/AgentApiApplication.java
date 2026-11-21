@@ -29,9 +29,10 @@ import java.util.concurrent.Executors;
  * }</pre>
  *
  * <p>Valid values: {@code sequential}, {@code parallel}, {@code conditional},
- * {@code iterative}, {@code plan-and-execute}, {@code orchestrator-workers}, {@code react},
- * {@code supervisor}, {@code rag}, {@code memory}, {@code review}, {@code guardrail}. Values are matched
- * exactly, so relaxed binding does not apply — spell them as written.</p>
+ * {@code iterative}, {@code plan-and-execute}, {@code orchestrator-workers}, {@code voting},
+ * {@code react}, {@code supervisor}, {@code rag}, {@code memory}, {@code review},
+ * {@code guardrail}. Values are matched exactly, so relaxed binding does not apply — spell them
+ * as written.</p>
  *
  * <p>{@code rag} is the one demo with a prerequisite beyond the API key, and the one that takes a
  * second flag. It needs a Chroma running on the host in {@code application.properties}, already
@@ -179,6 +180,21 @@ public class AgentApiApplication {
                     + "covering its key features, pricing, and a brief FAQ.";
             String result = service.write(task);
             System.out.println(result);
+        };
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = DEMO_PROPERTY, havingValue = "voting")
+    CommandLineRunner votingRunner(VotingWorkflowExample service) {
+        return args -> {
+            System.out.println("\n=== VotingWorkflowExample result ===");
+
+            String review = "The setup was a nightmare and support took days to respond, but once "
+                    + "it finally worked the product itself has been great.";
+            System.out.println("[majority vote] " + service.classifyByMajorityVote(review));
+
+            String complaint = "I was charged twice for my subscription this month and I need a refund!";
+            System.out.println("[judge] " + service.draftByJudge(complaint));
         };
     }
 
